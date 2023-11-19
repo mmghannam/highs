@@ -86,13 +86,13 @@
 //! // All the constraints are at their maximum
 //! assert_eq!(solution.rows(), vec![6., 7.]);
 //! ```
-//! 
+//!
 //! ### Integer variables
-//! 
+//!
 //! HiGHS supports mixed integer-linear programming.
 //! You can use `add_integer_column` to add an integer variable to the problem,
 //! and the solution is then guaranteed to contain a whole number as a value for this variable.
-//! 
+//!
 //! ```
 //! use highs::{Sense, Model, HighsModelStatus, ColProblem};
 //! // maximize: x + 2y under constraints x + y <= 3.5 and x - y >= 1
@@ -110,7 +110,7 @@
 
 use std::convert::{TryFrom, TryInto};
 use std::ffi::{c_void, CString};
-use std::ops::{Bound, RangeBounds};
+use std::ops::{Bound, RangeBounds, Index};
 use std::os::raw::c_int;
 
 use highs_sys::*;
@@ -151,8 +151,8 @@ pub struct Problem<MATRIX = ColMatrix> {
 }
 
 impl<MATRIX: Default> Problem<MATRIX>
-    where
-        Problem<ColMatrix>: From<Problem<MATRIX>>,
+where
+    Problem<ColMatrix>: From<Problem<MATRIX>>,
 {
     /// Number of variables in the problem
     pub fn num_cols(&self) -> usize {
@@ -324,7 +324,8 @@ impl Model {
                     problem.matrix.aindex.as_ptr(),
                     problem.matrix.avalue.as_ptr()
                 ))
-            }.map(|_| Self { highs })
+            }
+            .map(|_| Self { highs })
         }
     }
 
@@ -360,6 +361,79 @@ impl Model {
     pub fn try_solve(mut self) -> Result<SolvedModel, HighsStatus> {
         unsafe { highs_call!(Highs_run(self.highs.mut_ptr())) }
             .map(|_| SolvedModel { highs: self.highs })
+    }
+
+    /// Adds a new constraint to the highs model.
+    pub fn add_row(
+        mut self,
+        bounds: impl RangeBounds<f64>,
+        row_factors: impl IntoIterator<Item = (Col, f64)>,
+    ) -> Self {
+        self.try_add_row(bounds, row_factors)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e));
+        self
+    }
+
+
+    /// Tries to add a new constraint to the highs model.
+    ///
+    /// Returns the status of the model after adding the row.
+    pub fn try_add_row(
+        &mut self,
+        bounds: impl RangeBounds<f64>,
+        row_factors: impl IntoIterator<Item = (Col, f64)>,
+    ) -> Result<HighsStatus, HighsStatus> {
+        let (cols, factors): (Vec<_>, Vec<_>) = row_factors.into_iter().unzip();
+        unsafe {
+            highs_call!(
+                Highs_addRow(
+                    self.highs.mut_ptr(),
+                    bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY),
+                    bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY),
+                    cols.len().try_into().unwrap(),
+                    cols.into_iter().map(|c| c.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
+                    factors.as_ptr()
+                )
+           )
+        }
+    }
+
+
+    /// Adds a new variable to the highs model.
+    pub fn add_col(
+        mut self,
+        col_factor: f64,
+        bounds: impl RangeBounds<f64>,
+        row_factors: impl IntoIterator<Item = (Row, f64)>,
+    ) -> Self {
+        self.try_add_column(col_factor, bounds, row_factors)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e));
+        self
+    }
+
+    /// Tries to add a new variable to the highs model.
+    ///
+    /// Returns the status of the model after adding the column.
+    pub fn try_add_column(
+        &mut self,
+        col_factor: f64,
+        bounds: impl RangeBounds<f64>,
+        row_factors: impl IntoIterator<Item = (Row, f64)>,
+    ) -> Result<HighsStatus, HighsStatus> {
+        let (rows, factors): (Vec<_>, Vec<_>) = row_factors.into_iter().unzip();
+        unsafe {
+            highs_call!(
+                Highs_addCol(
+                    self.highs.mut_ptr(),
+                    col_factor,
+                    bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY),
+                    bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY),
+                    rows.len().try_into().unwrap(),
+                    rows.into_iter().map(|r| r.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
+                    factors.as_ptr()
+                )
+            )
+        }
     }
 }
 
@@ -496,6 +570,13 @@ impl Solution {
     }
 }
 
+impl Index<Col> for Solution {
+    type Output = f64;
+    fn index(&self, col: Col) -> &f64 {
+        &self.colvalue[col.0]
+    }
+}
+
 fn try_handle_status(status: c_int, msg: &str) -> Result<HighsStatus, HighsStatus> {
     let status_enum = HighsStatus::try_from(status)
         .expect("HiGHS returned an unexpected status value. Please report it as a bug to https://github.com/rust-or/highs/issues");
@@ -547,5 +628,19 @@ mod test {
         problem.add_row(2..3, row_factors);
         let _ = problem.optimise(Sense::Minimise).try_solve();
     }
-}
 
+    #[test]
+    fn test_add_row_and_col() {
+        let mut model = Model::new::<Problem<ColMatrix>>(Problem::default())
+            .add_col(1., 1.0.., vec![])
+            .add_row(..1.0, vec![(Col(0), 1.0)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+
+        let model = Model::from(solved)
+            .add_col(1., ..1.0, vec![])
+            .add_row(2.0.., vec![(Col(1), 1.0)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Infeasible);
+    }
+}
