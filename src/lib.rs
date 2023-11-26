@@ -364,6 +364,10 @@ impl Model {
     }
 
     /// Adds a new constraint to the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
     pub fn add_row(
         mut self,
         bounds: impl RangeBounds<f64>,
@@ -400,6 +404,10 @@ impl Model {
 
 
     /// Adds a new variable to the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
     pub fn add_col(
         mut self,
         col_factor: f64,
@@ -636,6 +644,8 @@ mod test {
             .add_row(..1.0, vec![(Col(0), 1.0)]);
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        let solution = solved.get_solution();
+        assert_eq!(solution.columns(), vec![1.0]);
 
         let model = Model::from(solved)
             .add_col(1., ..1.0, vec![])
