@@ -259,7 +259,7 @@ pub enum Sense {
 }
 impl Default for Model {
     fn default() -> Self {
-        Self::new::<Problem<ColMatrix>>(Problem::default()).optimise(Sense::Minimise)
+        Self::new::<Problem<ColMatrix>>(Problem::default())
     }
 }
 
