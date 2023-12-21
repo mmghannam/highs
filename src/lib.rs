@@ -257,6 +257,11 @@ pub enum Sense {
     /// min
     Minimise = OBJECTIVE_SENSE_MINIMIZE as isize,
 }
+impl Default for Model {
+    fn default() -> Self {
+        Self::new::<Problem<ColMatrix>>(Problem::default()).optimise(Sense::Minimise)
+    }
+}
 
 impl Model {
     /// Set the optimization sense (minimize by default)
