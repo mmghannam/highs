@@ -490,6 +490,44 @@ impl Model {
 
         Ok(())
     }
+
+
+    /// Tries to change the bounds of a constraint from the highs model.
+    ///
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_change_row_bounds(
+        &mut self,
+        row: Row,
+        bounds: impl RangeBounds<f64>,
+    ) -> Result<(), HighsStatus> {
+        unsafe {
+            highs_call!(
+                Highs_changeRowsBoundsBySet(
+                    self.highs.mut_ptr(),
+                    1,
+                    vec![row.0].as_ptr(),
+                    vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
+                    vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
+                )
+           )?
+        };
+
+        Ok(())
+    }
+
+    /// Changes the bounds of a constraint from the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    pub fn change_row_bounds(
+        &mut self,
+        row: Row,
+        bounds: impl RangeBounds<f64>,
+    ) {
+        self.try_change_row_bounds(row, bounds)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
 }
 
 impl From<SolvedModel> for Model {
