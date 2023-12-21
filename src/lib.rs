@@ -456,6 +456,40 @@ impl Model {
 
         Ok(Col(self.highs.num_cols()? - 1))
     }
+
+    /// Deletes a constraint from the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    pub fn del_row(
+        &mut self,
+        row: Row,
+    ) {
+        self.try_del_row(row)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+
+    /// Tries to delete a constraint from the highs model.
+    ///
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_del_row(
+        &mut self,
+        row: Row,
+    ) -> Result<(), HighsStatus> {
+        unsafe {
+            highs_call!(
+                Highs_deleteRowsBySet(
+                    self.highs.mut_ptr(),
+                    1,
+                    vec![row.0].as_ptr()
+                )
+           )?
+        };
+
+        Ok(())
+    }
 }
 
 impl From<SolvedModel> for Model {
@@ -676,5 +710,21 @@ mod test {
         model.add_row(2.0.., vec![(new_col, 1.0)]);
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Infeasible);
+    }
+
+
+    #[test]
+    fn test_del_row_and_col() {
+        let mut model = Model::new::<Problem<ColMatrix>>(Problem::default());
+        let col = model.add_col(1., 1.0.., vec![]);
+        model.add_row(..1.0, vec![(col, 1.0)]);
+        let row = model.add_row(2.0.., vec![(col, 1.0)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Infeasible);
+
+        let mut model = Model::from(solved);
+        model.del_row(row);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
     }
 }
