@@ -110,6 +110,7 @@
 
 use std::convert::{TryFrom, TryInto};
 use std::ffi::{c_void, CString};
+use std::num::TryFromIntError;
 use std::ops::{Bound, RangeBounds, Index};
 use std::os::raw::c_int;
 
@@ -256,6 +257,11 @@ pub enum Sense {
     /// min
     Minimise = OBJECTIVE_SENSE_MINIMIZE as isize,
 }
+impl Default for Model {
+    fn default() -> Self {
+        Self::new::<Problem<ColMatrix>>(Problem::default())
+    }
+}
 
 impl Model {
     /// Set the optimization sense (minimize by default)
@@ -365,29 +371,31 @@ impl Model {
 
     /// Adds a new constraint to the highs model.
     ///
+    /// Returns the added row index.
+    ///
     /// # Panics
     ///
     /// If HIGHS returns an error status value.
     pub fn add_row(
-        mut self,
+        &mut self,
         bounds: impl RangeBounds<f64>,
-        row_factors: impl IntoIterator<Item = (Col, f64)>,
-    ) -> Self {
+        row_factors: impl IntoIterator<Item=(Col, f64)>,
+    ) -> Row {
         self.try_add_row(bounds, row_factors)
-            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e));
-        self
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
 
 
     /// Tries to add a new constraint to the highs model.
     ///
-    /// Returns the status of the model after adding the row.
+    /// Returns the added row index, or the error status value if HIGHS returned an error status.
     pub fn try_add_row(
         &mut self,
         bounds: impl RangeBounds<f64>,
-        row_factors: impl IntoIterator<Item = (Col, f64)>,
-    ) -> Result<HighsStatus, HighsStatus> {
+        row_factors: impl IntoIterator<Item=(Col, f64)>,
+    ) -> Result<Row, HighsStatus> {
         let (cols, factors): (Vec<_>, Vec<_>) = row_factors.into_iter().unzip();
+
         unsafe {
             highs_call!(
                 Highs_addRow(
@@ -399,35 +407,38 @@ impl Model {
                     factors.as_ptr()
                 )
            )
-        }
+        }?;
+
+        Ok(Row((self.highs.num_rows()? - 1) as c_int))
     }
 
 
     /// Adds a new variable to the highs model.
     ///
+    /// Returns the added column index.
+    ///
     /// # Panics
     ///
     /// If HIGHS returns an error status value.
     pub fn add_col(
-        mut self,
+        &mut self,
         col_factor: f64,
         bounds: impl RangeBounds<f64>,
-        row_factors: impl IntoIterator<Item = (Row, f64)>,
-    ) -> Self {
+        row_factors: impl IntoIterator<Item=(Row, f64)>,
+    ) -> Col {
         self.try_add_column(col_factor, bounds, row_factors)
-            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e));
-        self
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
 
     /// Tries to add a new variable to the highs model.
     ///
-    /// Returns the status of the model after adding the column.
+    /// Returns the added column index, or the error status value if HIGHS returned an error status.
     pub fn try_add_column(
         &mut self,
         col_factor: f64,
         bounds: impl RangeBounds<f64>,
-        row_factors: impl IntoIterator<Item = (Row, f64)>,
-    ) -> Result<HighsStatus, HighsStatus> {
+        row_factors: impl IntoIterator<Item=(Row, f64)>,
+    ) -> Result<Col, HighsStatus> {
         let (rows, factors): (Vec<_>, Vec<_>) = row_factors.into_iter().unzip();
         unsafe {
             highs_call!(
@@ -441,7 +452,106 @@ impl Model {
                     factors.as_ptr()
                 )
             )
-        }
+        }?;
+
+        Ok(Col(self.highs.num_cols()? - 1))
+    }
+
+    /// Deletes a constraint from the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    pub fn del_row(
+        &mut self,
+        row: Row,
+    ) {
+        self.try_del_row(row)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+
+    /// Tries to delete a constraint from the highs model.
+    ///
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_del_row(
+        &mut self,
+        row: Row,
+    ) -> Result<(), HighsStatus> {
+        self.try_del_rows(vec![row])
+    }
+
+    /// Deletes constraints from the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    ///
+    pub fn del_rows(
+        &mut self,
+        rows: Vec<Row>,
+    ) {
+        self.try_del_rows(rows)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+
+    /// Tries to delete constraints from the highs model.
+    ///
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_del_rows(
+        &mut self,
+        rows: Vec<Row>,
+    ) -> Result<(), HighsStatus> {
+        unsafe {
+            highs_call!(
+                Highs_deleteRowsBySet(
+                    self.highs.mut_ptr(),
+                    rows.len().try_into().unwrap(),
+                    rows.into_iter().map(|r| r.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr()
+                )
+           )?
+        };
+
+        Ok(())
+    }
+
+
+    /// Tries to change the bounds of a constraint from the highs model.
+    ///
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_change_row_bounds(
+        &mut self,
+        row: Row,
+        bounds: impl RangeBounds<f64>,
+    ) -> Result<(), HighsStatus> {
+        unsafe {
+            highs_call!(
+                Highs_changeRowsBoundsBySet(
+                    self.highs.mut_ptr(),
+                    1,
+                    vec![row.0].as_ptr(),
+                    vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
+                    vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
+                )
+           )?
+        };
+
+        Ok(())
+    }
+
+    /// Changes the bounds of a constraint from the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    pub fn change_row_bounds(
+        &mut self,
+        row: Row,
+        bounds: impl RangeBounds<f64>,
+    ) {
+        self.try_change_row_bounds(row, bounds)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
 }
 
@@ -500,6 +610,19 @@ impl HighsPtr {
         try_handle_status(status, "Highs_setOptionValue")
             .expect("An error was encountered in HiGHS.");
     }
+
+
+    /// Number of variables
+    fn num_cols(&self) -> Result<usize, TryFromIntError> {
+        let n = unsafe { Highs_getNumCols(self.0) };
+        n.try_into()
+    }
+
+    /// Number of constraints
+    fn num_rows(&self) -> Result<usize, TryFromIntError> {
+        let n = unsafe { Highs_getNumRows(self.0) };
+        n.try_into()
+    }
 }
 
 impl SolvedModel {
@@ -539,14 +662,12 @@ impl SolvedModel {
 
     /// Number of variables
     fn num_cols(&self) -> usize {
-        let n = unsafe { Highs_getNumCols(self.highs.unsafe_mut_ptr()) };
-        n.try_into().expect("invalid number of columns")
+        self.highs.num_cols().expect("invalid number of columns")
     }
 
     /// Number of constraints
     fn num_rows(&self) -> usize {
-        let n = unsafe { Highs_getNumRows(self.highs.unsafe_mut_ptr()) };
-        n.try_into().expect("invalid number of rows")
+        self.highs.num_rows().expect("invalid number of rows")
     }
 }
 
@@ -652,18 +773,34 @@ mod test {
 
     #[test]
     fn test_add_row_and_col() {
-        let mut model = Model::new::<Problem<ColMatrix>>(Problem::default())
-            .add_col(1., 1.0.., vec![])
-            .add_row(..1.0, vec![(Col(0), 1.0)]);
+        let mut model = Model::new::<Problem<ColMatrix>>(Problem::default());
+        let col = model.add_col(1., 1.0.., vec![]);
+        model.add_row(..1.0, vec![(col, 1.0)]);
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
         let solution = solved.get_solution();
         assert_eq!(solution.columns(), vec![1.0]);
 
-        let model = Model::from(solved)
-            .add_col(1., ..1.0, vec![])
-            .add_row(2.0.., vec![(Col(1), 1.0)]);
+        let mut model = Model::from(solved);
+        let new_col = model.add_col(1., ..1.0, vec![]);
+        model.add_row(2.0.., vec![(new_col, 1.0)]);
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Infeasible);
+    }
+
+
+    #[test]
+    fn test_del_row_and_col() {
+        let mut model = Model::new::<Problem<ColMatrix>>(Problem::default());
+        let col = model.add_col(1., 1.0.., vec![]);
+        let row1 = model.add_row(..1.0, vec![(col, 1.0)]);
+        let row2 = model.add_row(2.0.., vec![(col, 1.0)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Infeasible);
+
+        let mut model = Model::from(solved);
+        model.del_rows(vec![row1, row2]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
     }
 }
