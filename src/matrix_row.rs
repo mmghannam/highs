@@ -5,7 +5,7 @@ use std::ops::RangeBounds;
 use std::os::raw::c_int;
 
 use crate::matrix_col::ColMatrix;
-use crate::Problem;
+use crate::{Problem, Row};
 
 /// Represents a variable
 #[derive(Debug, Clone, Copy)]
@@ -76,7 +76,7 @@ impl Problem<RowMatrix> {
         &mut self,
         bounds: B,
         row_factors: I,
-    ) {
+    ) -> Row {
         let num_rows: c_int = self.num_rows().try_into().expect("too many rows");
         for r in row_factors {
             let &(col, factor) = r.borrow();
@@ -84,7 +84,7 @@ impl Problem<RowMatrix> {
             c.0.push(num_rows);
             c.1.push(factor);
         }
-        self.add_row_inner(bounds);
+        self.add_row_inner(bounds)
     }
 
 
