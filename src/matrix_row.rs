@@ -89,10 +89,15 @@ impl Problem<RowMatrix> {
 
 
     /// Set the coefficient of a variable in a constraint.
-    pub fn set_cons_coef(&mut self, row: usize, col: Col, value: f64) {
+    pub fn set_cons_coef(&mut self, row: Row, col: Col, value: f64) {
         let c = &mut self.matrix.columns[col.0];
-        c.0.push(row as c_int);
-        c.1.push(value);
+        let index = c.0.iter().position(|&x| x == row.0);
+        if let Some(index) = index {
+            c.1[index] = value;
+        }  else {
+            c.0.push(row.0);
+            c.1.push(value);
+        }
     }
 }
 
