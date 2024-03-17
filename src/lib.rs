@@ -638,6 +638,19 @@ mod test {
     }
 
     #[test]
+    fn test_set_cons_coef() {
+        let mut problem = RowProblem::new();
+        let col = problem.add_column(1., 0..);
+        let row_factors: &[(Col, f64)] = &[];
+        problem.add_row(2..3, row_factors);
+        problem.set_cons_coef(0, col, 1.0);
+        let solved = problem.optimise(Sense::Minimise).solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        let solution = solved.get_solution();
+        assert_eq!(solution.columns(), vec![2.0]);
+    }
+
+    #[test]
     fn test_add_row_and_col() {
         let mut model = Model::new::<Problem<ColMatrix>>(Problem::default())
             .add_col(1., 1.0.., vec![])

@@ -86,6 +86,14 @@ impl Problem<RowMatrix> {
         }
         self.add_row_inner(bounds);
     }
+
+
+    /// Set the coefficient of a variable in a constraint.
+    pub fn set_cons_coef(&mut self, row: usize, col: Col, value: f64) {
+        let c = &mut self.matrix.columns[col.0];
+        c.0.push(row as c_int);
+        c.1.push(value);
+    }
 }
 
 impl From<RowMatrix> for ColMatrix {
