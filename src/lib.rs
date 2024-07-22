@@ -925,7 +925,7 @@ mod test {
 
 
     #[test]
-    fn test_del_rows() {
+    fn test_del_row_and_col() {
         let mut model = Model::new::<Problem<ColMatrix>>(Problem::default());
         let col = model.add_col(1., 1.0.., vec![]);
         let row1 = model.add_row(..1.0, vec![(col, 1.0)]);
