@@ -111,7 +111,7 @@
 use std::convert::{TryFrom, TryInto};
 use std::ffi::{c_void, CString};
 use std::num::TryFromIntError;
-use std::ops::{Bound, RangeBounds, Index};
+use std::ops::{Bound, Index, RangeBounds};
 use std::os::raw::c_int;
 
 use highs_sys::*;
@@ -152,8 +152,8 @@ pub struct Problem<MATRIX = ColMatrix> {
 }
 
 impl<MATRIX: Default> Problem<MATRIX>
-    where
-        Problem<ColMatrix>: From<Problem<MATRIX>>,
+where
+    Problem<ColMatrix>: From<Problem<MATRIX>>,
 {
     /// Number of variables in the problem
     pub fn num_cols(&self) -> usize {
@@ -342,7 +342,7 @@ impl Model {
                     problem.matrix.avalue.as_ptr()
                 ))
             }
-                .map(|_| Self { highs })
+            .map(|_| Self { highs })
         }
     }
 
@@ -390,12 +390,11 @@ impl Model {
     pub fn add_row(
         &mut self,
         bounds: impl RangeBounds<f64>,
-        row_factors: impl IntoIterator<Item=(Col, f64)>,
+        row_factors: impl IntoIterator<Item = (Col, f64)>,
     ) -> Row {
         self.try_add_row(bounds, row_factors)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
-
 
     /// Tries to add a new constraint to the highs model.
     ///
@@ -403,26 +402,26 @@ impl Model {
     pub fn try_add_row(
         &mut self,
         bounds: impl RangeBounds<f64>,
-        row_factors: impl IntoIterator<Item=(Col, f64)>,
+        row_factors: impl IntoIterator<Item = (Col, f64)>,
     ) -> Result<Row, HighsStatus> {
         let (cols, factors): (Vec<_>, Vec<_>) = row_factors.into_iter().unzip();
 
         unsafe {
-            highs_call!(
-                Highs_addRow(
-                    self.highs.mut_ptr(),
-                    bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY),
-                    bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY),
-                    cols.len().try_into().unwrap(),
-                    cols.into_iter().map(|c| c.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
-                    factors.as_ptr()
-                )
-           )
+            highs_call!(Highs_addRow(
+                self.highs.mut_ptr(),
+                bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY),
+                bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY),
+                cols.len().try_into().unwrap(),
+                cols.into_iter()
+                    .map(|c| c.try_into().unwrap())
+                    .collect::<Vec<_>>()
+                    .as_ptr(),
+                factors.as_ptr()
+            ))
         }?;
 
         Ok(((self.highs.num_rows()? - 1) as c_int).try_into().unwrap())
     }
-
 
     /// Adds a new variable to the highs model.
     ///
@@ -435,7 +434,7 @@ impl Model {
         &mut self,
         col_factor: f64,
         bounds: impl RangeBounds<f64>,
-        row_factors: impl IntoIterator<Item=(Row, f64)>,
+        row_factors: impl IntoIterator<Item = (Row, f64)>,
     ) -> Col {
         self.try_add_column(col_factor, bounds, row_factors)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
@@ -448,21 +447,22 @@ impl Model {
         &mut self,
         col_factor: f64,
         bounds: impl RangeBounds<f64>,
-        row_factors: impl IntoIterator<Item=(Row, f64)>,
+        row_factors: impl IntoIterator<Item = (Row, f64)>,
     ) -> Result<Col, HighsStatus> {
         let (rows, factors): (Vec<_>, Vec<_>) = row_factors.into_iter().unzip();
         unsafe {
-            highs_call!(
-                Highs_addCol(
-                    self.highs.mut_ptr(),
-                    col_factor,
-                    bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY),
-                    bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY),
-                    rows.len().try_into().unwrap(),
-                    rows.into_iter().map(|r| r.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
-                    factors.as_ptr()
-                )
-            )
+            highs_call!(Highs_addCol(
+                self.highs.mut_ptr(),
+                col_factor,
+                bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY),
+                bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY),
+                rows.len().try_into().unwrap(),
+                rows.into_iter()
+                    .map(|r| r.try_into().unwrap())
+                    .collect::<Vec<_>>()
+                    .as_ptr(),
+                factors.as_ptr()
+            ))
         }?;
 
         Ok(self.highs.num_cols()? - 1)
@@ -473,10 +473,7 @@ impl Model {
     /// # Panics
     ///
     /// If HIGHS returns an error status value.
-    pub fn del_row(
-        &mut self,
-        row: Row,
-    ) {
+    pub fn del_row(&mut self, row: Row) {
         self.try_del_row(row)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
@@ -484,10 +481,7 @@ impl Model {
     /// Tries to delete a constraint from the highs model.
     ///
     /// Returns an error status value if HIGHS returned an error status.
-    pub fn try_del_row(
-        &mut self,
-        row: Row,
-    ) -> Result<(), HighsStatus> {
+    pub fn try_del_row(&mut self, row: Row) -> Result<(), HighsStatus> {
         self.try_del_rows(vec![row])
     }
 
@@ -497,45 +491,35 @@ impl Model {
     ///
     /// If HIGHS returns an error status value.
     ///
-    pub fn del_rows(
-        &mut self,
-        rows: Vec<Row>,
-    ) {
+    pub fn del_rows(&mut self, rows: Vec<Row>) {
         self.try_del_rows(rows)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
 
-
     /// Tries to delete constraints from the highs model.
     ///
     /// Returns an error status value if HIGHS returned an error status.
-    pub fn try_del_rows(
-        &mut self,
-        rows: Vec<Row>,
-    ) -> Result<(), HighsStatus> {
+    pub fn try_del_rows(&mut self, rows: Vec<Row>) -> Result<(), HighsStatus> {
         unsafe {
-            highs_call!(
-                Highs_deleteRowsBySet(
-                    self.highs.mut_ptr(),
-                    rows.len().try_into().unwrap(),
-                    rows.into_iter().map(|r| r.try_into().unwrap()).collect::<Vec<_>>().as_ptr()
-                )
-           )?
+            highs_call!(Highs_deleteRowsBySet(
+                self.highs.mut_ptr(),
+                rows.len().try_into().unwrap(),
+                rows.into_iter()
+                    .map(|r| r.try_into().unwrap())
+                    .collect::<Vec<_>>()
+                    .as_ptr()
+            ))?
         };
 
         Ok(())
     }
-
 
     /// Deletes a variable from the highs model.
     ///
     /// # Panics
     ///
     /// If HIGHS returns an error status value.
-    pub fn del_col(
-        &mut self,
-        col: Col,
-    ) {
+    pub fn del_col(&mut self, col: Col) {
         self.try_del_col(col)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
@@ -543,10 +527,7 @@ impl Model {
     /// Tries to delete a variable from the highs model.
     ///
     /// Returns an error status value if HIGHS returned an error status.
-    pub fn try_del_col(
-        &mut self,
-        col: Col,
-    ) -> Result<(), HighsStatus> {
+    pub fn try_del_col(&mut self, col: Col) -> Result<(), HighsStatus> {
         self.try_del_cols(vec![col])
     }
 
@@ -555,10 +536,7 @@ impl Model {
     /// # Panics
     ///
     /// If HIGHS returns an error status value.
-    pub fn del_cols(
-        &mut self,
-        cols: Vec<Col>,
-    ) {
+    pub fn del_cols(&mut self, cols: Vec<Col>) {
         self.try_del_cols(cols)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
@@ -566,18 +544,16 @@ impl Model {
     /// Tries to delete variables from the highs model.
     ///
     /// Returns an error status value if HIGHS returned an error status.
-    pub fn try_del_cols(
-        &mut self,
-        cols: Vec<Col>,
-    ) -> Result<(), HighsStatus> {
+    pub fn try_del_cols(&mut self, cols: Vec<Col>) -> Result<(), HighsStatus> {
         unsafe {
-            highs_call!(
-                Highs_deleteColsBySet(
-                    self.highs.mut_ptr(),
-                    cols.len().try_into().unwrap(),
-                    cols.into_iter().map(|c| c.try_into().unwrap()).collect::<Vec<_>>().as_ptr()
-                )
-           )?
+            highs_call!(Highs_deleteColsBySet(
+                self.highs.mut_ptr(),
+                cols.len().try_into().unwrap(),
+                cols.into_iter()
+                    .map(|c| c.try_into().unwrap())
+                    .collect::<Vec<_>>()
+                    .as_ptr()
+            ))?
         };
 
         Ok(())
@@ -592,15 +568,13 @@ impl Model {
         bounds: impl RangeBounds<f64>,
     ) -> Result<(), HighsStatus> {
         unsafe {
-            highs_call!(
-                Highs_changeRowsBoundsBySet(
-                    self.highs.mut_ptr(),
-                    1,
-                    vec![row as c_int].as_ptr(),
-                    vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
-                    vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
-                )
-           )?
+            highs_call!(Highs_changeRowsBoundsBySet(
+                self.highs.mut_ptr(),
+                1,
+                vec![row as c_int].as_ptr(),
+                vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
+                vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
+            ))?
         };
 
         Ok(())
@@ -611,26 +585,16 @@ impl Model {
     /// # Panics
     ///
     /// If HIGHS returns an error status value.
-    pub fn change_row_bounds(
-        &mut self,
-        row: Row,
-        bounds: impl RangeBounds<f64>,
-    ) {
+    pub fn change_row_bounds(&mut self, row: Row, bounds: impl RangeBounds<f64>) {
         self.try_change_row_bounds(row, bounds)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
 
-
     /// Changes the bounds of a variable (column) in the highs model.
-    pub fn change_col_bounds(
-        &mut self,
-        col: Col,
-        bounds: impl RangeBounds<f64>,
-    ) {
+    pub fn change_col_bounds(&mut self, col: Col, bounds: impl RangeBounds<f64>) {
         self.try_change_col_bounds(col, bounds)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
-
 
     /// Tries to change the bounds of a variable (column) in the highs model.
     pub fn try_change_col_bounds(
@@ -640,15 +604,13 @@ impl Model {
     ) -> Result<(), HighsStatus> {
         let col_indices = vec![col as i32];
         unsafe {
-            highs_call!(
-                Highs_changeColsBoundsBySet(
-                    self.highs.mut_ptr(),
-                    1,
-                    col_indices.as_ptr(),
-                    vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
-                    vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
-                )
-            )?
+            highs_call!(Highs_changeColsBoundsBySet(
+                self.highs.mut_ptr(),
+                1,
+                col_indices.as_ptr(),
+                vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
+                vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
+            ))?
         };
         Ok(())
     }
@@ -658,33 +620,22 @@ impl Model {
     /// # Panics
     ///
     /// If HIGHS returns an error status value.
-    pub fn change_col_cost(
-        &mut self,
-        col: Col,
-        cost: f64,
-    ) {
+    pub fn change_col_cost(&mut self, col: Col, cost: f64) {
         self.try_change_col_cost(col, cost)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
 
-
     /// Tries to change the objective coefficient of a variable in the highs model.
     /// Returns an error status value if HIGHS returned an error status.
-    pub fn try_change_col_cost(
-        &mut self,
-        col: Col,
-        cost: f64,
-    ) -> Result<(), HighsStatus> {
+    pub fn try_change_col_cost(&mut self, col: Col, cost: f64) -> Result<(), HighsStatus> {
         let col_indices = vec![col as i32];
         unsafe {
-            highs_call!(
-                Highs_changeColsCostBySet(
-                    self.highs.mut_ptr(),
-                    1,
-                    col_indices.as_ptr(),
-                    vec![cost].as_ptr()
-                )
-            )?
+            highs_call!(Highs_changeColsCostBySet(
+                self.highs.mut_ptr(),
+                1,
+                col_indices.as_ptr(),
+                vec![cost].as_ptr()
+            ))?
         };
         Ok(())
     }
@@ -745,7 +696,6 @@ impl HighsPtr {
         try_handle_status(status, "Highs_setOptionValue")
             .expect("An error was encountered in HiGHS.");
     }
-
 
     /// Number of variables
     fn num_cols(&self) -> Result<usize, TryFromIntError> {
@@ -922,7 +872,6 @@ mod test {
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Infeasible);
     }
-
 
     #[test]
     fn test_del_row_and_col() {

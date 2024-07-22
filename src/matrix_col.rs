@@ -9,7 +9,6 @@ use crate::Problem;
 /// Represents a constraint
 pub type Row = usize;
 
-
 /// A constraint matrix to build column-by-column
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ColMatrix {
@@ -56,7 +55,7 @@ impl Problem<ColMatrix> {
     }
 
     /// Same as add_column, but forces the solution to contain an integer value for this variable.
-    /// 
+    ///
     /// ```
     /// use highs::{ColProblem, Sense};
     /// let mut pb = ColProblem::new();

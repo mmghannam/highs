@@ -10,7 +10,6 @@ use crate::{Problem, Row};
 /// Represents a variable
 pub type Col = usize;
 
-
 /// A complete optimization problem stored by row
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RowMatrix {
@@ -71,7 +70,7 @@ impl Problem<RowMatrix> {
         N: Into<f64> + Copy,
         B: RangeBounds<N>,
         ITEM: Borrow<(Col, f64)>,
-        I: IntoIterator<Item=ITEM>,
+        I: IntoIterator<Item = ITEM>,
     >(
         &mut self,
         bounds: B,
@@ -87,14 +86,13 @@ impl Problem<RowMatrix> {
         self.add_row_inner(bounds)
     }
 
-
     /// Set the coefficient of a variable in a constraint.
     pub fn set_cons_coef(&mut self, row: Row, col: Col, value: f64) {
         let c = &mut self.matrix.columns[col];
         let index = c.0.iter().position(|&x| x == row as c_int);
         if let Some(index) = index {
             c.1[index] = value;
-        }  else {
+        } else {
             c.0.push(row as c_int);
             c.1.push(value);
         }
