@@ -152,8 +152,8 @@ pub struct Problem<MATRIX = ColMatrix> {
 }
 
 impl<MATRIX: Default> Problem<MATRIX>
-where
-    Problem<ColMatrix>: From<Problem<MATRIX>>,
+    where
+        Problem<ColMatrix>: From<Problem<MATRIX>>,
 {
     /// Number of variables in the problem
     pub fn num_cols(&self) -> usize {
@@ -257,6 +257,7 @@ pub enum Sense {
     /// min
     Minimise = OBJECTIVE_SENSE_MINIMIZE as isize,
 }
+
 impl Default for Model {
     fn default() -> Self {
         Self::new::<Problem<ColMatrix>>(Problem::default())
@@ -264,6 +265,16 @@ impl Default for Model {
 }
 
 impl Model {
+    /// number of columns
+    pub fn num_cols(&self) -> usize {
+        unsafe { Highs_getNumCols(self.highs.ptr()) as usize }
+    }
+
+    /// number of rows
+    pub fn num_rows(&self) -> usize {
+        unsafe { Highs_getNumRows(self.highs.ptr()) as usize }
+    }
+
     /// Set the optimization sense (minimize by default)
     pub fn set_sense(&mut self, sense: Sense) {
         let ret = unsafe { Highs_changeObjectiveSense(self.highs.mut_ptr(), sense as c_int) };
@@ -331,7 +342,7 @@ impl Model {
                     problem.matrix.avalue.as_ptr()
                 ))
             }
-            .map(|_| Self { highs })
+                .map(|_| Self { highs })
         }
     }
 
@@ -470,7 +481,6 @@ impl Model {
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
 
-
     /// Tries to delete a constraint from the highs model.
     ///
     /// Returns an error status value if HIGHS returned an error status.
@@ -517,6 +527,62 @@ impl Model {
     }
 
 
+    /// Deletes a variable from the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    pub fn del_col(
+        &mut self,
+        col: Col,
+    ) {
+        self.try_del_col(col)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+    /// Tries to delete a variable from the highs model.
+    ///
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_del_col(
+        &mut self,
+        col: Col,
+    ) -> Result<(), HighsStatus> {
+        self.try_del_cols(vec![col])
+    }
+
+    /// Deletes variables from the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    pub fn del_cols(
+        &mut self,
+        cols: Vec<Col>,
+    ) {
+        self.try_del_cols(cols)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+    /// Tries to delete variables from the highs model.
+    ///
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_del_cols(
+        &mut self,
+        cols: Vec<Col>,
+    ) -> Result<(), HighsStatus> {
+        unsafe {
+            highs_call!(
+                Highs_deleteColsBySet(
+                    self.highs.mut_ptr(),
+                    cols.len().try_into().unwrap(),
+                    cols.into_iter().map(|c| c.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr()
+                )
+           )?
+        };
+
+        Ok(())
+    }
+
     /// Tries to change the bounds of a constraint from the highs model.
     ///
     /// Returns an error status value if HIGHS returned an error status.
@@ -552,6 +618,75 @@ impl Model {
     ) {
         self.try_change_row_bounds(row, bounds)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+
+    /// Changes the bounds of a variable (column) in the highs model.
+    pub fn change_col_bounds(
+        &mut self,
+        col: Col,
+        bounds: impl RangeBounds<f64>,
+    ) {
+        self.try_change_col_bounds(col, bounds)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+
+    /// Tries to change the bounds of a variable (column) in the highs model.
+    pub fn try_change_col_bounds(
+        &mut self,
+        col: Col,
+        bounds: impl RangeBounds<f64>,
+    ) -> Result<(), HighsStatus> {
+        let col_indices = vec![col.0 as i32];
+        unsafe {
+            highs_call!(
+                Highs_changeColsBoundsBySet(
+                    self.highs.mut_ptr(),
+                    1,
+                    col_indices.as_ptr(),
+                    vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
+                    vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
+                )
+            )?
+        };
+        Ok(())
+    }
+
+    /// Changes the objective coefficient of a variable in the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    pub fn change_col_cost(
+        &mut self,
+        col: Col,
+        cost: f64,
+    ) {
+        self.try_change_col_cost(col, cost)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+
+    /// Tries to change the objective coefficient of a variable in the highs model.
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_change_col_cost(
+        &mut self,
+        col: Col,
+        cost: f64,
+    ) -> Result<(), HighsStatus> {
+        let col_indices = vec![col.0 as i32];
+        unsafe {
+            highs_call!(
+                Highs_changeColsCostBySet(
+                    self.highs.mut_ptr(),
+                    1,
+                    col_indices.as_ptr(),
+                    vec![cost].as_ptr()
+                )
+            )?
+        };
+        Ok(())
     }
 }
 
@@ -790,7 +925,7 @@ mod test {
 
 
     #[test]
-    fn test_del_row_and_col() {
+    fn test_del_rows() {
         let mut model = Model::new::<Problem<ColMatrix>>(Problem::default());
         let col = model.add_col(1., 1.0.., vec![]);
         let row1 = model.add_row(..1.0, vec![(col, 1.0)]);
@@ -802,5 +937,41 @@ mod test {
         model.del_rows(vec![row1, row2]);
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
+    }
+
+    #[test]
+    fn test_del_cols() {
+        let mut model = Model::new::<Problem<ColMatrix>>(Problem::default());
+
+        let col1 = model.add_col(1.0, 0.0.., vec![]);
+        let col2 = model.add_col(1.0, 0.0.., vec![]);
+
+        model.add_row(2.0.., vec![(col1, 1.0), (col2, 1.0)]);
+
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+
+        let mut model = Model::from(solved);
+        model.del_cols(vec![col1, col2]);
+
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::ModelEmpty);
+    }
+
+    #[test]
+    fn test_add_col_after_solve() {
+        let mut model = Model::new::<Problem<ColMatrix>>(Problem::default());
+        model.set_sense(Sense::Maximise);
+
+        let col1 = model.add_col(1.0, 0.0..10.0, vec![]);
+        let solved = model.solve();
+
+        println!("{:?}", solved.get_solution().columns());
+
+        let mut model = Model::from(solved);
+        let col2 = model.add_col(1.0, 0.0..10.0, vec![]);
+        let solved = model.solve();
+
+        println!("{:?}", solved.get_solution().columns());
     }
 }
