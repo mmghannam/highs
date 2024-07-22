@@ -166,7 +166,7 @@ impl<MATRIX: Default> Problem<MATRIX>
     }
 
     fn add_row_inner<N: Into<f64> + Copy, B: RangeBounds<N>>(&mut self, bounds: B) -> Row {
-        let r = Row(self.num_rows().try_into().expect("too many rows"));
+        let r = self.num_rows().try_into().expect("too many rows");
         let low = bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY);
         let high = bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY);
         self.rowlower.push(low);
@@ -414,13 +414,13 @@ impl Model {
                     bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY),
                     bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY),
                     cols.len().try_into().unwrap(),
-                    cols.into_iter().map(|c| c.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
+                    cols.into_iter().map(|c| c.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
                     factors.as_ptr()
                 )
            )
         }?;
 
-        Ok(Row((self.highs.num_rows()? - 1) as c_int))
+        Ok(((self.highs.num_rows()? - 1) as c_int).try_into().unwrap())
     }
 
 
@@ -459,13 +459,13 @@ impl Model {
                     bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY),
                     bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY),
                     rows.len().try_into().unwrap(),
-                    rows.into_iter().map(|r| r.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
+                    rows.into_iter().map(|r| r.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
                     factors.as_ptr()
                 )
             )
         }?;
 
-        Ok(Col(self.highs.num_cols()? - 1))
+        Ok(self.highs.num_cols()? - 1)
     }
 
     /// Deletes a constraint from the highs model.
@@ -518,7 +518,7 @@ impl Model {
                 Highs_deleteRowsBySet(
                     self.highs.mut_ptr(),
                     rows.len().try_into().unwrap(),
-                    rows.into_iter().map(|r| r.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr()
+                    rows.into_iter().map(|r| r.try_into().unwrap()).collect::<Vec<_>>().as_ptr()
                 )
            )?
         };
@@ -575,7 +575,7 @@ impl Model {
                 Highs_deleteColsBySet(
                     self.highs.mut_ptr(),
                     cols.len().try_into().unwrap(),
-                    cols.into_iter().map(|c| c.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr()
+                    cols.into_iter().map(|c| c.try_into().unwrap()).collect::<Vec<_>>().as_ptr()
                 )
            )?
         };
@@ -596,7 +596,7 @@ impl Model {
                 Highs_changeRowsBoundsBySet(
                     self.highs.mut_ptr(),
                     1,
-                    vec![row.0].as_ptr(),
+                    vec![row as c_int].as_ptr(),
                     vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
                     vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
                 )
@@ -638,7 +638,7 @@ impl Model {
         col: Col,
         bounds: impl RangeBounds<f64>,
     ) -> Result<(), HighsStatus> {
-        let col_indices = vec![col.0 as i32];
+        let col_indices = vec![col as i32];
         unsafe {
             highs_call!(
                 Highs_changeColsBoundsBySet(
@@ -675,7 +675,7 @@ impl Model {
         col: Col,
         cost: f64,
     ) -> Result<(), HighsStatus> {
-        let col_indices = vec![col.0 as i32];
+        let col_indices = vec![col as i32];
         unsafe {
             highs_call!(
                 Highs_changeColsCostBySet(
@@ -837,7 +837,7 @@ impl Solution {
 impl Index<Col> for Solution {
     type Output = f64;
     fn index(&self, col: Col) -> &f64 {
-        &self.colvalue[col.0]
+        &self.colvalue[col]
     }
 }
 

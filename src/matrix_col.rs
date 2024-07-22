@@ -7,8 +7,8 @@ use std::os::raw::c_int;
 use crate::Problem;
 
 /// Represents a constraint
-#[derive(Debug, Clone, Copy)]
-pub struct Row(pub(crate) c_int);
+pub type Row = usize;
+
 
 /// A constraint matrix to build column-by-column
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -102,7 +102,7 @@ impl Problem<ColMatrix> {
         self.matrix.avalue.reserve(size);
         for r in iter {
             let &(row, factor) = r.borrow();
-            self.matrix.aindex.push(row.0);
+            self.matrix.aindex.push(row as c_int);
             self.matrix.avalue.push(factor);
         }
         self.add_column_inner(col_factor, bounds, is_integer);
