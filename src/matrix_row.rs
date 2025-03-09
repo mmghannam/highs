@@ -5,11 +5,10 @@ use std::ops::RangeBounds;
 use std::os::raw::c_int;
 
 use crate::matrix_col::ColMatrix;
-use crate::Problem;
+use crate::{Problem, Row};
 
 /// Represents a variable
-#[derive(Debug, Clone, Copy)]
-pub struct Col(pub(crate) usize);
+pub type Col = usize;
 
 /// A complete optimization problem stored by row
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -49,7 +48,7 @@ impl Problem<RowMatrix> {
         bounds: B,
         is_integer: bool,
     ) -> Col {
-        let col = Col(self.num_cols());
+        let col = self.num_cols();
         self.add_column_inner(col_factor, bounds, is_integer);
         self.matrix.columns.push((vec![], vec![]));
         col
@@ -71,20 +70,32 @@ impl Problem<RowMatrix> {
         N: Into<f64> + Copy,
         B: RangeBounds<N>,
         ITEM: Borrow<(Col, f64)>,
-        I: IntoIterator<Item=ITEM>,
+        I: IntoIterator<Item = ITEM>,
     >(
         &mut self,
         bounds: B,
         row_factors: I,
-    ) {
+    ) -> Row {
         let num_rows: c_int = self.num_rows().try_into().expect("too many rows");
         for r in row_factors {
             let &(col, factor) = r.borrow();
-            let c = &mut self.matrix.columns[col.0];
+            let c = &mut self.matrix.columns[col];
             c.0.push(num_rows);
             c.1.push(factor);
         }
-        self.add_row_inner(bounds);
+        self.add_row_inner(bounds)
+    }
+
+    /// Set the coefficient of a variable in a constraint.
+    pub fn set_cons_coef(&mut self, row: Row, col: Col, value: f64) {
+        let c = &mut self.matrix.columns[col];
+        let index = c.0.iter().position(|&x| x == row as c_int);
+        if let Some(index) = index {
+            c.1[index] = value;
+        } else {
+            c.0.push(row as c_int);
+            c.1.push(value);
+        }
     }
 }
 
