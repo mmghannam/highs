@@ -517,7 +517,32 @@ impl Model {
     }
 
 
-    /// Tries to change the bounds of a constraint from the highs model.
+    /// Tries to change the bounds of constraints from the highs model.
+    ///
+    /// Returns an error status value if HIGHS returned an error status.
+    pub fn try_change_rows_bounds(
+        &mut self,
+        rows: Vec<Row>,
+        bounds: impl RangeBounds<f64>,
+    ) -> Result<(), HighsStatus> {
+        let size = rows.len();
+        unsafe {
+            highs_call!(
+                Highs_changeRowsBoundsBySet(
+                    self.highs.mut_ptr(),
+                    size.try_into().unwrap(),
+                    rows.into_iter().map(|r| r.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
+                    vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY); size].as_ptr(),
+                    vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY); size].as_ptr()
+                )
+           )?
+        };
+
+        Ok(())
+    }
+
+
+    /// Tries to change the bounds of constraints from the highs model.
     ///
     /// Returns an error status value if HIGHS returned an error status.
     pub fn try_change_row_bounds(
@@ -530,7 +555,7 @@ impl Model {
                 Highs_changeRowsBoundsBySet(
                     self.highs.mut_ptr(),
                     1,
-                    vec![row.0].as_ptr(),
+                    vec![row].into_iter().map(|r| r.0.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
                     vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY)].as_ptr(),
                     vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY)].as_ptr()
                 )
@@ -539,6 +564,8 @@ impl Model {
 
         Ok(())
     }
+
+
 
     /// Changes the bounds of a constraint from the highs model.
     ///
@@ -551,6 +578,22 @@ impl Model {
         bounds: impl RangeBounds<f64>,
     ) {
         self.try_change_row_bounds(row, bounds)
+            .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
+    }
+
+
+
+    /// Changes the bounds of constraints from the highs model.
+    ///
+    /// # Panics
+    ///
+    /// If HIGHS returns an error status value.
+    pub fn change_rows_bounds(
+        &mut self,
+        rows: Vec<Row>,
+        bounds: impl RangeBounds<f64>,
+    ) {
+        self.try_change_rows_bounds(rows, bounds)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
 }
