@@ -940,13 +940,13 @@ mod test {
         let mut model = Model::new::<Problem<ColMatrix>>(Problem::default());
         model.set_sense(Sense::Maximise);
 
-        let col1 = model.add_col(1.0, 0.0..10.0, vec![]);
+        model.add_col(1.0, 0.0..10.0, vec![]);
         let solved = model.solve();
 
         println!("{:?}", solved.get_solution().columns());
 
         let mut model = Model::from(solved);
-        let col2 = model.add_col(1.0, 0.0..10.0, vec![]);
+        model.add_col(1.0, 0.0..10.0, vec![]);
         let solved = model.solve();
 
         println!("{:?}", solved.get_solution().columns());
