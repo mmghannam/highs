@@ -113,7 +113,7 @@ use std::ffi::{c_void, CString};
 use std::num::TryFromIntError;
 use std::ops::{Bound, Index, RangeBounds};
 use std::os::raw::c_int;
-
+use std::ptr::null_mut;
 use highs_sys::*;
 
 pub use matrix_col::{ColMatrix, Row};
@@ -295,7 +295,7 @@ impl Model {
     /// Returns an error if the problem is incoherent
     pub fn try_new<P: Into<Problem<ColMatrix>>>(problem: P) -> Result<Self, HighsStatus> {
         let mut highs = HighsPtr::default();
-        highs.make_quiet();
+        // highs.make_quiet();
         let problem = problem.into();
         log::debug!(
             "Adding a problem with {} variables and {} constraints to HiGHS",
@@ -569,20 +569,20 @@ impl Model {
     ) -> Result<(), HighsStatus> {
         let size = rows.len();
         unsafe {
-            highs_call!(
-                Highs_changeRowsBoundsBySet(
-                    self.highs.mut_ptr(),
-                    size.try_into().unwrap(),
-                    rows.into_iter().map(|r| r.try_into().unwrap()).collect::<Vec<_>>().as_ptr(),
-                    vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY); size].as_ptr(),
-                    vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY); size].as_ptr()
-                )
-           )?
+            highs_call!(Highs_changeRowsBoundsBySet(
+                self.highs.mut_ptr(),
+                size.try_into().unwrap(),
+                rows.into_iter()
+                    .map(|r| r.try_into().unwrap())
+                    .collect::<Vec<_>>()
+                    .as_ptr(),
+                vec![bound_value(bounds.start_bound()).unwrap_or(f64::NEG_INFINITY); size].as_ptr(),
+                vec![bound_value(bounds.end_bound()).unwrap_or(f64::INFINITY); size].as_ptr()
+            ))?
         };
 
         Ok(())
     }
-
 
     /// Tries to change the bounds of constraints from the highs model.
     ///
@@ -605,8 +605,6 @@ impl Model {
         Ok(())
     }
 
-
-
     /// Changes the bounds of a constraint from the highs model.
     ///
     /// # Panics
@@ -616,7 +614,6 @@ impl Model {
         self.try_change_row_bounds(row, bounds)
             .unwrap_or_else(|e| panic!("HiGHS error: {:?}", e))
     }
-
 
     /// Changes the bounds of a variable (column) in the highs model.
     pub fn change_col_bounds(&mut self, col: Col, bounds: impl RangeBounds<f64>) {
@@ -736,6 +733,7 @@ impl HighsPtr {
         let n = unsafe { Highs_getNumRows(self.0) };
         n.try_into()
     }
+
 }
 
 impl SolvedModel {
@@ -781,6 +779,42 @@ impl SolvedModel {
     /// Number of constraints
     fn num_rows(&self) -> usize {
         self.highs.num_rows().expect("invalid number of rows")
+    }
+
+    /// Get the basis variables
+    pub fn get_basic_vars(&self) -> Vec<usize> {
+        let mut vars = vec![0; self.num_cols()];
+        unsafe {
+            highs_call! {
+                Highs_getBasicVariables(self.highs.unsafe_mut_ptr(), vars.as_mut_ptr())
+            }.map_err(|e| {
+                println!("Error while getting basic variables: {:?}", e);
+            });
+        }
+
+        vars.iter().map(|v| *v as usize).collect()
+    }
+
+
+    /// Get basis status
+    pub fn get_basis(&self) -> (Vec<BasisStatus>, Vec<BasisStatus>) {
+        let mut col_status = vec![kHighsBasisStatusZero; self.num_cols()];
+        let mut row_status = vec![kHighsBasisStatusZero; self.num_rows()];
+        unsafe {
+            highs_call! {
+                Highs_getBasis(
+                    self.highs.unsafe_mut_ptr(),
+                    col_status.as_mut_ptr(),
+                    row_status.as_mut_ptr()
+                )
+            }.map_err(|e| {
+                println!("Error while getting basis status: {:?}", e);
+            });
+        }
+
+        let col_status = col_status.iter().map(|&s| s.into()).collect();
+        let row_status = row_status.iter().map(|&s| s.into()).collect();
+        (col_status, row_status)
     }
 }
 
@@ -829,6 +863,32 @@ fn try_handle_status(status: c_int, msg: &str) -> Result<HighsStatus, HighsStatu
             Ok(status)
         }
         error => Err(error),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// The status of a variable/column in the basis
+pub enum BasisStatus {
+    /// The variable is at its lower bound
+    Lower,
+    /// The variable is at its upper bound
+    Basic,
+    /// The variable is at its upper bound
+    Upper,
+    /// The variable is at zero
+    Zero,
+}
+
+
+impl From<HighsInt> for BasisStatus {
+    fn from(status: HighsInt) -> Self {
+        match status {
+            kHighsBasisStatusLower => BasisStatus::Lower,
+            kHighsBasisStatusBasic => BasisStatus::Basic,
+            kHighsBasisStatusUpper => BasisStatus::Upper,
+            kHighsBasisStatusZero => BasisStatus::Zero,
+            _ => panic!("Invalid basis status"),
+        }
     }
 }
 
@@ -950,5 +1010,23 @@ mod test {
         let solved = model.solve();
 
         println!("{:?}", solved.get_solution().columns());
+    }
+
+    #[test]
+    fn test_basis_methods() {
+        let mut problem = RowProblem::new();
+        let x = problem.add_integer_column(1.2, 0..);
+        let y = problem.add_integer_column(1.7, 0..);
+        problem.add_row(..3000, [x].iter().copied().zip([1.]));
+        problem.add_row(..4000, [y].iter().copied().zip([1.]));
+        problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
+        let mut model = problem.optimise(Sense::Maximise);
+        model.set_option("presolve", "off");
+        // assert_eq!(basic_vars.len(), 1);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        let (col_statuses, row_statuses) = solved.get_basis();
+        assert!(col_statuses.iter().all(|&s| s == BasisStatus::Lower));
+        assert!(row_statuses.iter().all(|&s| s == BasisStatus::Lower));
     }
 }
