@@ -782,17 +782,17 @@ impl SolvedModel {
     }
 
     /// Get the basis variables
-    pub fn get_basic_vars(&self) -> Vec<usize> {
+    pub fn get_basic_vars(&self) -> Vec<HighsInt> {
         let mut vars = vec![0; self.num_cols()];
         unsafe {
             highs_call! {
                 Highs_getBasicVariables(self.highs.unsafe_mut_ptr(), vars.as_mut_ptr())
             }.map_err(|e| {
                 println!("Error while getting basic variables: {:?}", e);
-            });
+            }).unwrap();
         }
 
-        vars.iter().map(|v| *v as usize).collect()
+        vars
     }
 
 
@@ -815,6 +815,56 @@ impl SolvedModel {
         let col_status = col_status.iter().map(|&s| s.into()).collect();
         let row_status = row_status.iter().map(|&s| s.into()).collect();
         (col_status, row_status)
+    }
+
+
+    /// Get the reduced row
+    pub fn get_reduced_row(&self, row: Row) -> Vec<f64> {
+        let mut reduced_row = vec![0.; self.num_rows()];
+        let row_non_zeros: *mut HighsInt = null_mut();
+        // let mut row_index: Vec<HighsInt> = vec![0; self.num_rows()];
+        let row_index: *mut HighsInt = null_mut();
+        unsafe {
+            highs_call! {
+                Highs_getReducedRow(
+                    self.highs.unsafe_mut_ptr(),
+                    row.try_into().unwrap(),
+                    reduced_row.as_mut_ptr(),
+                    row_non_zeros,
+                    // row_index.as_mut_ptr()
+                    row_index
+                )
+            }.map_err(|e| {
+                println!("Error while getting reduced row: {:?}", e);
+            }).unwrap();
+        }
+
+        reduced_row
+    }
+
+    /// Get the reduced column
+    pub fn get_reduced_column(&self, col: Col) -> Vec<f64> {
+        let mut reduced_col = vec![0.; self.num_rows()];
+        let col_non_zeros: *mut HighsInt = null_mut();
+        // let mut col_index: Vec<HighsInt> = vec![0; self.num_rows()];
+        let col_index: *mut HighsInt = null_mut();
+
+        unsafe {
+            highs_call! {
+                Highs_getReducedColumn(
+                    self.highs.unsafe_mut_ptr(),
+                    col.try_into().unwrap(),
+                    reduced_col.as_mut_ptr(),
+                    col_non_zeros,
+                    // col_index.as_mut_ptr()
+                    col_index
+                )
+            }.map_err(|e| {
+                println!("Error while getting reduced column: {:?}", e);
+            }).unwrap();
+        }
+
+        reduced_col
     }
 }
 
@@ -1015,18 +1065,31 @@ mod test {
     #[test]
     fn test_basis_methods() {
         let mut problem = RowProblem::new();
-        let x = problem.add_integer_column(1.2, 0..);
-        let y = problem.add_integer_column(1.7, 0..);
+        let x = problem.add_column(1.2, 0..);
+        let y = problem.add_column(1.7, 0..);
         problem.add_row(..3000, [x].iter().copied().zip([1.]));
         problem.add_row(..4000, [y].iter().copied().zip([1.]));
         problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
         let mut model = problem.optimise(Sense::Maximise);
-        model.set_option("presolve", "off");
-        // assert_eq!(basic_vars.len(), 1);
+        // model.set_option("presolve", "off");
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
         let (col_statuses, row_statuses) = solved.get_basis();
-        assert!(col_statuses.iter().all(|&s| s == BasisStatus::Lower));
-        assert!(row_statuses.iter().all(|&s| s == BasisStatus::Lower));
+        assert_eq!(col_statuses, vec![BasisStatus::Basic, BasisStatus::Basic]);
+        assert_eq!(row_statuses, vec![BasisStatus::Basic, BasisStatus::Upper, BasisStatus::Upper]);
+        let basic_vars = solved.get_basic_vars();
+        assert_eq!(basic_vars.len(), 2);
+        println!("{:?}", basic_vars);
+
+
+        for i in 0..solved.num_rows() {
+            let reduced_row = solved.get_reduced_row(i);
+            println!("{:?}", reduced_row);
+        }
+
+        for i in 0..solved.num_cols() {
+            let reduced_col = solved.get_reduced_column(i);
+            println!("{:?}", reduced_col);
+        }
     }
 }
