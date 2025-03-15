@@ -782,22 +782,33 @@ impl SolvedModel {
     }
 
     /// Get the basis variables
-    pub fn get_basic_vars(&self) -> Vec<HighsInt> {
-        let mut vars = vec![0; self.num_cols()];
+    pub fn get_basic_vars(&self) -> (Vec<Col>, Vec<Row>) {
+        let mut basis_ids = vec![0; self.num_rows()];
         unsafe {
             highs_call! {
-                Highs_getBasicVariables(self.highs.unsafe_mut_ptr(), vars.as_mut_ptr())
+                Highs_getBasicVariables(self.highs.unsafe_mut_ptr(), basis_ids.as_mut_ptr())
             }.map_err(|e| {
                 println!("Error while getting basic variables: {:?}", e);
             }).unwrap();
         }
 
-        vars
+        let mut col_vars = Vec::with_capacity(self.num_rows());
+        let mut row_vars = Vec::with_capacity(self.num_rows());
+
+        for basis_var in basis_ids.into_iter() {
+            if basis_var >= 0 {
+                col_vars.push(basis_var as Col);
+            } else {
+                row_vars.push((- basis_var - 1) as Row);
+            }
+        }
+
+        (col_vars, row_vars)
     }
 
 
     /// Get basis status
-    pub fn get_basis(&self) -> (Vec<BasisStatus>, Vec<BasisStatus>) {
+    pub fn get_basis_status(&self) -> (Vec<BasisStatus>, Vec<BasisStatus>) {
         let mut col_status = vec![kHighsBasisStatusZero; self.num_cols()];
         let mut row_status = vec![kHighsBasisStatusZero; self.num_rows()];
         unsafe {
@@ -1074,19 +1085,27 @@ mod test {
         // model.set_option("presolve", "off");
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
-        let (col_statuses, row_statuses) = solved.get_basis();
+        let (col_statuses, row_statuses) = solved.get_basis_status();
         assert_eq!(col_statuses, vec![BasisStatus::Basic, BasisStatus::Basic]);
         assert_eq!(row_statuses, vec![BasisStatus::Basic, BasisStatus::Upper, BasisStatus::Upper]);
-        let basic_vars = solved.get_basic_vars();
-        assert_eq!(basic_vars.len(), 2);
-        println!("{:?}", basic_vars);
+        let (basic_cols, basic_rows) = solved.get_basic_vars();
+        println!("\nbasic cols: {:?},\nbasic rows: {:?}", basic_cols, basic_rows);
+        assert_eq!(basic_cols.len(), 2);
+        for col in basic_cols {
+            assert_eq!(col_statuses[col], BasisStatus::Basic);
+        }
+        assert_eq!(basic_rows.len(), 1);
+        for row in basic_rows {
+            assert_eq!(row_statuses[row], BasisStatus::Basic);
+        }
 
-
+        println!("reduced rows:");
         for i in 0..solved.num_rows() {
             let reduced_row = solved.get_reduced_row(i);
             println!("{:?}", reduced_row);
         }
 
+        println!("reduced cols:");
         for i in 0..solved.num_cols() {
             let reduced_col = solved.get_reduced_column(i);
             println!("{:?}", reduced_col);
