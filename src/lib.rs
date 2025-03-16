@@ -108,13 +108,13 @@
 //! assert_eq!(solved.get_solution().columns(), vec![2.5, 1.]);
 //! ```
 
+use highs_sys::*;
 use std::convert::{TryFrom, TryInto};
 use std::ffi::{c_void, CString};
 use std::num::TryFromIntError;
 use std::ops::{Bound, Index, RangeBounds};
 use std::os::raw::c_int;
 use std::ptr::null_mut;
-use highs_sys::*;
 
 pub use matrix_col::{ColMatrix, Row};
 pub use matrix_row::{Col, RowMatrix};
@@ -733,7 +733,6 @@ impl HighsPtr {
         let n = unsafe { Highs_getNumRows(self.0) };
         n.try_into()
     }
-
 }
 
 impl SolvedModel {
@@ -787,9 +786,11 @@ impl SolvedModel {
         unsafe {
             highs_call! {
                 Highs_getBasicVariables(self.highs.unsafe_mut_ptr(), basis_ids.as_mut_ptr())
-            }.map_err(|e| {
+            }
+            .map_err(|e| {
                 println!("Error while getting basic variables: {:?}", e);
-            }).unwrap();
+            })
+            .unwrap();
         }
 
         let mut col_vars = Vec::with_capacity(self.num_rows());
@@ -799,13 +800,12 @@ impl SolvedModel {
             if basis_var >= 0 {
                 col_vars.push(basis_var as Col);
             } else {
-                row_vars.push((- basis_var - 1) as Row);
+                row_vars.push((-basis_var - 1) as Row);
             }
         }
 
         (col_vars, row_vars)
     }
-
 
     /// Get basis status
     pub fn get_basis_status(&self) -> (Vec<BasisStatus>, Vec<BasisStatus>) {
@@ -818,7 +818,8 @@ impl SolvedModel {
                     col_status.as_mut_ptr(),
                     row_status.as_mut_ptr()
                 )
-            }.map_err(|e| {
+            }
+            .map_err(|e| {
                 println!("Error while getting basis status: {:?}", e);
             });
         }
@@ -828,13 +829,11 @@ impl SolvedModel {
         (col_status, row_status)
     }
 
-
     /// Get the reduced row
-    pub fn get_reduced_row(&self, row: Row) -> Vec<f64> {
+    pub fn get_reduced_row(&self, row: Row) -> (Vec<f64>, Vec<HighsInt>) {
         let mut reduced_row = vec![0.; self.num_rows()];
-        let row_non_zeros: *mut HighsInt = null_mut();
-        // let mut row_index: Vec<HighsInt> = vec![0; self.num_rows()];
-        let row_index: *mut HighsInt = null_mut();
+        let row_non_zeros: *mut HighsInt = &mut 0;
+        let mut row_index: Vec<HighsInt> = vec![0; self.num_rows()];
         unsafe {
             highs_call! {
                 Highs_getReducedRow(
@@ -842,23 +841,25 @@ impl SolvedModel {
                     row.try_into().unwrap(),
                     reduced_row.as_mut_ptr(),
                     row_non_zeros,
-                    // row_index.as_mut_ptr()
-                    row_index
+                    row_index.as_mut_ptr()
                 )
-            }.map_err(|e| {
+            }
+            .map_err(|e| {
                 println!("Error while getting reduced row: {:?}", e);
-            }).unwrap();
+            })
+            .unwrap();
         }
+        let num_nonzeros = unsafe { *row_non_zeros };
+        row_index = row_index.into_iter().take(num_nonzeros as usize).collect();
 
-        reduced_row
+        (reduced_row, row_index)
     }
 
     /// Get the reduced column
-    pub fn get_reduced_column(&self, col: Col) -> Vec<f64> {
+    pub fn get_reduced_column(&self, col: Col) -> (Vec<f64>, Vec<HighsInt>) {
         let mut reduced_col = vec![0.; self.num_rows()];
-        let col_non_zeros: *mut HighsInt = null_mut();
-        // let mut col_index: Vec<HighsInt> = vec![0; self.num_rows()];
-        let col_index: *mut HighsInt = null_mut();
+        let col_non_zeros: *mut HighsInt = &mut 0;
+        let mut col_index = vec![0; self.num_rows()];
 
         unsafe {
             highs_call! {
@@ -867,15 +868,46 @@ impl SolvedModel {
                     col.try_into().unwrap(),
                     reduced_col.as_mut_ptr(),
                     col_non_zeros,
-                    // col_index.as_mut_ptr()
-                    col_index
+                    col_index.as_mut_ptr()
                 )
-            }.map_err(|e| {
+            }
+            .map_err(|e| {
                 println!("Error while getting reduced column: {:?}", e);
-            }).unwrap();
+            })
+            .unwrap();
         }
 
-        reduced_col
+        let num_nonzeros = unsafe { *col_non_zeros };
+        col_index = col_index.into_iter().take(num_nonzeros as usize).collect();
+
+        (reduced_col, col_index)
+    }
+
+    /// Returns solution to x = B^{-1} * b
+    pub fn get_basis_sol(&self, mut b: Vec<f64>) -> (Vec<f64>, Vec<HighsInt>) {
+        let mut x = vec![0.; self.num_rows()];
+        let mut solution_num_nz: *mut HighsInt = &mut 0;
+        let mut solution_index: Vec<HighsInt> = vec![0; self.num_rows()];
+        unsafe {
+            highs_call! {
+                Highs_getBasisSolve(
+                    self.highs.unsafe_mut_ptr(),
+                    b.as_mut_ptr(),
+                    x.as_mut_ptr(),
+                    solution_num_nz,
+                    solution_index.as_mut_ptr()
+                )
+            }
+            .map_err(|e| {
+                println!("Error while getting basis inverse row: {:?}", e);
+            })
+            .unwrap();
+        }
+
+        let num_nonzeros = unsafe { *solution_num_nz };
+        solution_index = solution_index.into_iter().take(num_nonzeros as usize).collect();
+
+        (x, solution_index)
     }
 }
 
@@ -939,7 +971,6 @@ pub enum BasisStatus {
     /// The variable is at zero
     Zero,
 }
-
 
 impl From<HighsInt> for BasisStatus {
     fn from(status: HighsInt) -> Self {
@@ -1087,9 +1118,15 @@ mod test {
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
         let (col_statuses, row_statuses) = solved.get_basis_status();
         assert_eq!(col_statuses, vec![BasisStatus::Basic, BasisStatus::Basic]);
-        assert_eq!(row_statuses, vec![BasisStatus::Basic, BasisStatus::Upper, BasisStatus::Upper]);
+        assert_eq!(
+            row_statuses,
+            vec![BasisStatus::Basic, BasisStatus::Upper, BasisStatus::Upper]
+        );
         let (basic_cols, basic_rows) = solved.get_basic_vars();
-        println!("\nbasic cols: {:?},\nbasic rows: {:?}", basic_cols, basic_rows);
+        println!(
+            "\nbasic cols: {:?},\nbasic rows: {:?}",
+            basic_cols, basic_rows
+        );
         assert_eq!(basic_cols.len(), 2);
         for col in basic_cols {
             assert_eq!(col_statuses[col], BasisStatus::Basic);
@@ -1110,5 +1147,10 @@ mod test {
             let reduced_col = solved.get_reduced_column(i);
             println!("{:?}", reduced_col);
         }
+
+        println!("basis sol:");
+        let basis_sol = solved.get_basis_sol(vec![3000., 4000., 5000.]);
+        println!("{:?}", basis_sol);
+        assert_eq!(basis_sol.0.len(), solved.num_rows());
     }
 }
