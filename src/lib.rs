@@ -295,7 +295,7 @@ impl Model {
     /// Returns an error if the problem is incoherent
     pub fn try_new<P: Into<Problem<ColMatrix>>>(problem: P) -> Result<Self, HighsStatus> {
         let mut highs = HighsPtr::default();
-        // highs.make_quiet();
+        highs.make_quiet();
         let problem = problem.into();
         log::debug!(
             "Adding a problem with {} variables and {} constraints to HiGHS",
