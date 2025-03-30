@@ -281,6 +281,15 @@ impl Model {
         assert_eq!(ret, STATUS_OK, "changeObjectiveSense failed");
     }
 
+    /// Reads a problem
+    pub fn read(&mut self, path: &str) {
+        let c_path = CString::new(path).expect("invalid path");
+        unsafe {
+            highs_call!(Highs_readModel(self.highs.mut_ptr(), c_path.as_ptr()))
+                .expect("failed to read model");
+        }
+    }
+
     /// Create a Highs model to be optimized (but don't solve it yet).
     /// If the given problem is a [RowProblem], it will have to be converted to a [ColProblem] first,
     /// which takes an amount of time proportional to the size of the problem.
@@ -905,7 +914,10 @@ impl SolvedModel {
         }
 
         let num_nonzeros = unsafe { *solution_num_nz };
-        solution_index = solution_index.into_iter().take(num_nonzeros as usize).collect();
+        solution_index = solution_index
+            .into_iter()
+            .take(num_nonzeros as usize)
+            .collect();
 
         (x, solution_index)
     }
