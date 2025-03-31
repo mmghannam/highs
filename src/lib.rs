@@ -414,6 +414,13 @@ impl Model {
         )
     }
 
+
+    /// Presolve the current model
+    pub fn presolve(&mut self) {
+        let ret = unsafe { Highs_presolve(self.highs.mut_ptr()) };
+        assert_eq!(ret, STATUS_OK, "runPresolve failed");
+    }
+
     /// Set the optimization sense (minimize by default)
     pub fn set_sense(&mut self, sense: Sense) {
         let ret = unsafe { Highs_changeObjectiveSense(self.highs.mut_ptr(), sense as c_int) };
@@ -443,7 +450,7 @@ impl Model {
     /// Returns an error if the problem is incoherent
     pub fn try_new<P: Into<Problem<ColMatrix>>>(problem: P) -> Result<Self, HighsStatus> {
         let mut highs = HighsPtr::default();
-        highs.make_quiet();
+        // highs.make_quiet();
         let problem = problem.into();
         log::debug!(
             "Adding a problem with {} variables and {} constraints to HiGHS",
@@ -1060,6 +1067,16 @@ impl SolvedModel {
 
         (x, solution_index)
     }
+
+
+    /// Postsolve a solution
+    pub fn postsolve(&mut self, col_vals: Vec<(Col, f64)>) -> Vec<(Col, f64)>  {
+        let mut col_vals = col_vals;
+        let mut col_vals_ptr = col_vals.as_mut_ptr();
+        let ret = unsafe { Highs_postsolve(self.highs.mut_ptr(), col_vals_ptr as *const f64, null_mut(), null_mut()) };
+        assert_ne!(ret, STATUS_ERROR, "postsolve failed");
+        col_vals
+    }
 }
 
 /// Concrete values of the solution
@@ -1359,5 +1376,36 @@ mod test {
             vec![(0, 1.0), (1, 1.0)]
         ]);
         assert_eq!(integrality, vec![VarType::Integer, VarType::Continuous]);
+    }
+
+    #[test]
+    fn test_presolve() {
+        let mut problem = RowProblem::new();
+        let x = problem.add_column(1.2, 0..);
+        let y = problem.add_column(1.7, 0..);
+        problem.add_row(..3000, [x].iter().copied().zip([1.]));
+        problem.add_row(..4000, [y].iter().copied().zip([1.]));
+        problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
+        let mut model = problem.optimise(Sense::Maximise);
+        model.presolve();
+
+        let (
+            num_col,
+            num_row,
+            num_nz,
+            sense,
+            offset,
+            col_cost,
+            col_lower,
+            col_upper,
+            row_lower,
+            row_upper,
+            row_data,
+            integrality,
+        ) = model.get_row_lp();
+
+        let mut model = model.solve();
+        let col_vals = model.postsolve(vec![(x, 0.0)]);
+        println!("col_vals {:?}", col_vals);
     }
 }
