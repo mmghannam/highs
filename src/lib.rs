@@ -258,6 +258,45 @@ pub enum Sense {
     Minimise = OBJECTIVE_SENSE_MINIMIZE as isize,
 }
 
+impl From<HighsInt> for Sense {
+    fn from(value: HighsInt) -> Self {
+        match value {
+            OBJECTIVE_SENSE_MINIMIZE => Sense::Minimise,
+            OBJECTIVE_SENSE_MAXIMIZE => Sense::Maximise,
+            other => {
+                panic!("Unknown objective sense with value {}", other)
+            }
+        }
+    }
+}
+
+/// Type of a variable in the problem
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum VarType {
+    /// Continuous variable (real valued)
+    Continuous,
+    /// Integer only variable
+    Integer,
+    /// Implicit Integer
+    ImplicitInteger,
+    /// Semi-Integer
+    SemiInteger,
+}
+
+impl From<HighsInt> for VarType {
+    fn from(value: HighsInt) -> Self {
+        match value {
+            kHighsVarTypeContinuous => VarType::Continuous,
+            kHighsVarTypeInteger => VarType::Integer,
+            kHighsVarTypeImplicitInteger => VarType::ImplicitInteger,
+            kHighsVarTypeSemiInteger => VarType::SemiInteger,
+            other => {
+                panic!("Unknown variable type with value {}", other)
+            }
+        }
+    }
+}
+
 impl Default for Model {
     fn default() -> Self {
         Self::new::<Problem<ColMatrix>>(Problem::default())
@@ -273,6 +312,106 @@ impl Model {
     /// number of rows
     pub fn num_rows(&self) -> usize {
         unsafe { Highs_getNumRows(self.highs.ptr()) as usize }
+    }
+
+    /// Returns the LP data in the problem
+    pub fn get_row_lp(
+        &self,
+    ) -> (
+        usize,
+        usize,
+        usize,
+        Sense,
+        f64,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<Vec<(Col, f64)>>,
+        Vec<VarType>,
+    ) {
+        let mut num_col = unsafe { Highs_getNumCol(self.highs.ptr()) };
+        let mut num_row = unsafe { Highs_getNumRow(self.highs.ptr()) };
+        let mut num_nz = unsafe { Highs_getNumNz(self.highs.ptr()) };
+
+        // Allocate arrays with the appropriate sizes
+        let mut col_cost = vec![0.0; num_col as usize];
+        let mut col_lower = vec![0.0; num_col as usize];
+        let mut col_upper = vec![0.0; num_col as usize];
+        let mut row_lower = vec![0.0; num_row as usize];
+        let mut row_upper = vec![0.0; num_row as usize];
+        let mut a_start = vec![0; (num_col + 1) as usize]; // +1 for CSC format
+        let mut a_index = vec![0; num_nz as usize];
+        let mut a_value = vec![0.0; num_nz as usize];
+        let mut integrality = vec![0; num_col as usize];
+
+        let mut sense = 0i32;
+        let mut offset: f64 = 0.0;
+
+        let res = unsafe {
+            highs_call! {
+                Highs_getLp(
+                    self.highs.ptr(),
+                    kHighsMatrixFormatRowwise,
+                    &mut num_col,
+                    &mut num_row,
+                    &mut num_nz,
+                    &mut sense,
+                    &mut offset,
+                    col_cost.as_mut_ptr(),
+                    col_lower.as_mut_ptr(),
+                    col_upper.as_mut_ptr(),
+                    row_lower.as_mut_ptr(),
+                    row_upper.as_mut_ptr(),
+                    a_start.as_mut_ptr(),
+                    a_index.as_mut_ptr(),
+                    a_value.as_mut_ptr(),
+                    integrality.as_mut_ptr()
+                )
+            }
+        };
+
+        let num_col = num_col as usize;
+        let num_row = num_row as usize;
+        let num_nz = num_nz as usize;
+
+        let integrality = integrality.into_iter().map(|v| v.into()).collect();
+
+        if res.is_err() {
+            panic!(
+                "Failed to call Highs_getLp, got error {:?}",
+                res.unwrap_err()
+            );
+        }
+
+        let mut row_data = Vec::with_capacity(num_row);
+
+        for i in 0..num_row {
+            let start = i;
+            let end = if i == (num_row - 1) { num_nz } else { i + 1 };
+
+            let mut index_vals = Vec::with_capacity(end - start);
+            for j in start..end {
+                index_vals.push((a_index[j] as Col, a_value[j]));
+            }
+            row_data.push(index_vals);
+        }
+
+        (
+            num_col,
+            num_row,
+            num_nz,
+            sense.into(), // Convert to your Sense enum
+            offset,
+            col_cost,
+            col_lower,
+            col_upper,
+            row_lower,
+            row_upper,
+            row_data,
+            integrality,
+        )
     }
 
     /// Set the optimization sense (minimize by default)
@@ -1164,5 +1303,61 @@ mod test {
         let basis_sol = solved.get_basis_sol(vec![3000., 4000., 5000.]);
         println!("{:?}", basis_sol);
         assert_eq!(basis_sol.0.len(), solved.num_rows());
+    }
+
+    #[test]
+    fn test_get_lp() {
+        let mut problem = RowProblem::new();
+        let x = problem.add_integer_column(1.2, 0..);
+        let y = problem.add_column(1.7, 0..);
+        problem.add_row(..3000, [x].iter().copied().zip([1.]));
+        problem.add_row(..4000, [y].iter().copied().zip([1.]));
+        problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
+        let mut model = problem.optimise(Sense::Maximise);
+
+        let (
+            num_col,
+            num_row,
+            num_nz,
+            sense,
+            offset,
+            col_cost,
+            col_lower,
+            col_upper,
+            row_lower,
+            row_upper,
+            row_data,
+            integrality,
+        ) = model.get_row_lp();
+
+        println!("num_col {:?}", num_col);
+        println!("num_row {:?}", num_row);
+        println!("num_nz {:?}", num_nz);
+        println!("sense {:?}", sense);
+        println!("offset {:?}", offset);
+        println!("col_cost {:?}", col_cost);
+        println!("col_lower {:?}", col_lower);
+        println!("col_upper {:?}", col_upper);
+        println!("row_lower {:?}", row_lower);
+        println!("row_upper {:?}", row_upper);
+        println!("row_data {:?}", row_data);
+        println!("integrality {:?}", integrality);
+
+        assert_eq!(num_col, 2);
+        assert_eq!(num_row, 3);
+        assert_eq!(num_nz, 4);
+        assert_eq!(sense, Sense::Maximise);
+        assert_eq!(offset, 0.0);
+        assert_eq!(col_cost, vec![1.2, 1.7]);
+        assert_eq!(col_lower, vec![0.0, 0.0]);
+        assert_eq!(col_upper, vec![f64::INFINITY, f64::INFINITY]);
+        assert_eq!(row_lower, vec![f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY]);
+        assert_eq!(row_upper, vec![3000.0, 4000.0, 5000.0]);
+        assert_eq!(row_data, vec![
+            vec![(0, 1.0)],
+            vec![(1, 1.0)],
+            vec![(0, 1.0), (1, 1.0)]
+        ]);
+        assert_eq!(integrality, vec![VarType::Integer, VarType::Continuous]);
     }
 }
