@@ -314,6 +314,11 @@ impl Model {
         unsafe { Highs_getNumRows(self.highs.ptr()) as usize }
     }
 
+    /// number of non-zeros
+    pub fn num_nz(&self) -> usize {
+        unsafe { Highs_getNumNz(self.highs.ptr()) as usize }
+    }
+
     /// Returns the LP data in the problem
     pub fn get_row_lp(
         &self,
@@ -376,7 +381,7 @@ impl Model {
         let num_row = num_row as usize;
         let num_nz = num_nz as usize;
 
-        let integrality = integrality.into_iter().map(|v| v.into()).collect();
+        let integrality = integrality.iter().map(|v| (*v).into()).collect();
 
         if res.is_err() {
             panic!(
@@ -386,10 +391,14 @@ impl Model {
         }
 
         let mut row_data = Vec::with_capacity(num_row);
-
-        for i in 0..num_row {
+        println!("num_row: {}", num_row);
+        // println!("num_col: {}", num_col);
+        println!("a_start: {:?}", a_start);
+        println!("a_index: {:?}", a_index);
+        println!("a_value: {:?}", a_value);
+        for i in 0..num_col {
             let start = a_start[i] as usize;
-            let end = if i == (num_row - 1) {
+            let end = if i == (num_col - 1) {
                 num_nz
             } else {
                 a_start[i + 1] as usize
@@ -408,12 +417,12 @@ impl Model {
             num_nz,
             sense.into(), // Convert to your Sense enum
             offset,
-            col_cost,
-            col_lower,
-            col_upper,
-            row_lower,
-            row_upper,
-            row_data,
+            col_cost.clone(),
+            col_lower.clone(),
+            col_upper.clone(),
+            row_lower.clone(),
+            row_upper.clone(),
+            row_data.clone(),
             integrality,
         )
     }
@@ -1455,5 +1464,30 @@ mod test {
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
         assert!((solved.obj_val() - -27.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_read_steininf() {
+        let mut model = Model::default();
+        model.read("data/stein9inf.mps");
+
+        let (
+            num_col,
+            num_row,
+            num_nz,
+            sense,
+            offset,
+            col_cost,
+            col_lower,
+            col_upper,
+            row_lower,
+            row_upper,
+            row_data,
+            integrality,
+        ) = model.get_row_lp();
+
+        println!("num_col {:?}", num_col);
+        // let model = model.solve();
+        // assert_eq!(model.status(), HighsModelStatus::Infeasible);
     }
 }
