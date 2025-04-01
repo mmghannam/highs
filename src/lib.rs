@@ -388,8 +388,12 @@ impl Model {
         let mut row_data = Vec::with_capacity(num_row);
 
         for i in 0..num_row {
-            let start = i;
-            let end = if i == (num_row - 1) { num_nz } else { i + 1 };
+            let start = a_start[i] as usize;
+            let end = if i == (num_row - 1) {
+                num_nz
+            } else {
+                a_start[i + 1] as usize
+            };
 
             let mut index_vals = Vec::with_capacity(end - start);
             for j in start..end {
@@ -413,7 +417,6 @@ impl Model {
             integrality,
         )
     }
-
 
     /// Presolve the current model
     pub fn presolve(&mut self) {
@@ -450,7 +453,7 @@ impl Model {
     /// Returns an error if the problem is incoherent
     pub fn try_new<P: Into<Problem<ColMatrix>>>(problem: P) -> Result<Self, HighsStatus> {
         let mut highs = HighsPtr::default();
-        // highs.make_quiet();
+        highs.make_quiet();
         let problem = problem.into();
         log::debug!(
             "Adding a problem with {} variables and {} constraints to HiGHS",
@@ -1068,14 +1071,25 @@ impl SolvedModel {
         (x, solution_index)
     }
 
-
     /// Postsolve a solution
-    pub fn postsolve(&mut self, col_vals: Vec<(Col, f64)>) -> Vec<(Col, f64)>  {
+    pub fn postsolve(&mut self, col_vals: Vec<(Col, f64)>) -> Vec<(Col, f64)> {
         let mut col_vals = col_vals;
         let mut col_vals_ptr = col_vals.as_mut_ptr();
-        let ret = unsafe { Highs_postsolve(self.highs.mut_ptr(), col_vals_ptr as *const f64, null_mut(), null_mut()) };
+        let ret = unsafe {
+            Highs_postsolve(
+                self.highs.mut_ptr(),
+                col_vals_ptr as *const f64,
+                null_mut(),
+                null_mut(),
+            )
+        };
         assert_ne!(ret, STATUS_ERROR, "postsolve failed");
         col_vals
+    }
+
+    /// Gets the objective value
+    pub fn obj_val(&self) -> f64 {
+        unsafe { Highs_getObjectiveValue(self.highs.ptr()) }
     }
 }
 
@@ -1368,13 +1382,15 @@ mod test {
         assert_eq!(col_cost, vec![1.2, 1.7]);
         assert_eq!(col_lower, vec![0.0, 0.0]);
         assert_eq!(col_upper, vec![f64::INFINITY, f64::INFINITY]);
-        assert_eq!(row_lower, vec![f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY]);
+        assert_eq!(
+            row_lower,
+            vec![f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY]
+        );
         assert_eq!(row_upper, vec![3000.0, 4000.0, 5000.0]);
-        assert_eq!(row_data, vec![
-            vec![(0, 1.0)],
-            vec![(1, 1.0)],
-            vec![(0, 1.0), (1, 1.0)]
-        ]);
+        assert_eq!(
+            row_data,
+            vec![vec![(0, 1.0)], vec![(1, 1.0)], vec![(0, 1.0), (1, 1.0)]]
+        );
         assert_eq!(integrality, vec![VarType::Integer, VarType::Continuous]);
     }
 
@@ -1407,5 +1423,37 @@ mod test {
         let mut model = model.solve();
         let col_vals = model.postsolve(vec![(x, 0.0)]);
         println!("col_vals {:?}", col_vals);
+    }
+
+    #[test]
+    fn test_read() {
+        let mut model = Model::default();
+        model.read("data/simple.mps");
+
+        assert_eq!(model.num_rows(), 2);
+        assert_eq!(model.num_cols(), 2);
+
+        let (
+            num_col,
+            num_row,
+            num_nz,
+            sense,
+            offset,
+            col_cost,
+            col_lower,
+            col_upper,
+            row_lower,
+            row_upper,
+            row_data,
+            integrality,
+        ) = model.get_row_lp();
+
+        for row in row_data.iter() {
+            assert_eq!(row.len(), 2);
+        }
+
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        assert!((solved.obj_val() - -27.0).abs() < 1e-6);
     }
 }
