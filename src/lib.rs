@@ -346,7 +346,7 @@ impl Model {
         let mut col_upper = vec![0.0; num_col as usize];
         let mut row_lower = vec![0.0; num_row as usize];
         let mut row_upper = vec![0.0; num_row as usize];
-        let mut a_start = vec![0; (num_col + 1) as usize]; // +1 for CSC format
+        let mut a_start = vec![0; num_row as usize];
         let mut a_index = vec![0; num_nz as usize];
         let mut a_value = vec![0.0; num_nz as usize];
         let mut integrality = vec![0; num_col as usize];
@@ -391,14 +391,14 @@ impl Model {
         }
 
         let mut row_data = Vec::with_capacity(num_row);
-        println!("num_row: {}", num_row);
+        // println!("num_row: {}", num_row);
         // println!("num_col: {}", num_col);
-        println!("a_start: {:?}", a_start);
-        println!("a_index: {:?}", a_index);
-        println!("a_value: {:?}", a_value);
-        for i in 0..num_col {
+        // println!("a_start: {:?}", a_start);
+        // println!("a_index: {:?}", a_index);
+        // println!("a_value: {:?}", a_value);
+        for i in 0..num_row {
             let start = a_start[i] as usize;
-            let end = if i == (num_col - 1) {
+            let end = if i == (num_row - 1) {
                 num_nz
             } else {
                 a_start[i + 1] as usize
@@ -1469,7 +1469,8 @@ mod test {
     #[test]
     fn test_read_steininf() {
         let mut model = Model::default();
-        model.read("data/stein9inf.mps");
+        // model.read("data/stein9inf.mps");
+        model.read("../lio/tests/data/p0201.mps");
 
         let (
             num_col,
@@ -1486,7 +1487,7 @@ mod test {
             integrality,
         ) = model.get_row_lp();
 
-        println!("num_col {:?}", num_col);
+        // println!("num_col {:?}", num_col);
         // let model = model.solve();
         // assert_eq!(model.status(), HighsModelStatus::Infeasible);
     }
