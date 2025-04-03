@@ -901,7 +901,7 @@ impl Model {
         col: Col,
         bounds: impl RangeBounds<f64>,
     ) -> Result<(), HighsStatus> {
-        let col_indices = vec![col as i32];
+        let col_indices = [col as i32];
         unsafe {
             highs_call!(Highs_changeColsBoundsBySet(
                 self.highs.mut_ptr(),
@@ -927,7 +927,7 @@ impl Model {
     /// Tries to change the objective coefficient of a variable in the highs model.
     /// Returns an error status value if HIGHS returned an error status.
     pub fn try_change_col_cost(&mut self, col: Col, cost: f64) -> Result<(), HighsStatus> {
-        let col_indices = vec![col as i32];
+        let col_indices = [col as i32];
         unsafe {
             highs_call!(Highs_changeColsCostBySet(
                 self.highs.mut_ptr(),
@@ -1160,7 +1160,7 @@ impl SolvedModel {
     /// Returns solution to x = B^{-1} * b
     pub fn get_basis_sol(&self, mut b: Vec<f64>) -> (Vec<f64>, Vec<HighsInt>) {
         let mut x = vec![0.; self.num_rows()];
-        let mut solution_num_nz: *mut HighsInt = &mut 0;
+        let solution_num_nz: *mut HighsInt = &mut 0;
         let mut solution_index: Vec<HighsInt> = vec![0; self.num_rows()];
         unsafe {
             highs_call! {
@@ -1193,9 +1193,9 @@ impl SolvedModel {
         let num_cols = self.num_cols();
         let mut flat_col_vals = vec![0.0; num_cols];
         for (col, val) in col_vals.iter_mut() {
-            flat_col_vals[*col as usize] = *val;
+            flat_col_vals[*col] = *val;
         }
-        let mut col_vals_ptr = flat_col_vals.as_mut_ptr();
+        let col_vals_ptr = flat_col_vals.as_mut_ptr();
         println!("input {:?}", flat_col_vals);
         let ret = unsafe {
             Highs_postsolve(
@@ -1208,14 +1208,14 @@ impl SolvedModel {
         assert_ne!(ret, STATUS_ERROR, "postsolve failed");
         println!("postsolved: {:?}", flat_col_vals);
 
-        let unflattened = flat_col_vals
+        
+
+        flat_col_vals
             .into_iter()
             .enumerate()
             .filter(|&x| x.1 != 0.)
             .map(|x| (x.0 as Col, x.1))
-            .collect::<Vec<_>>();
-
-        unflattened
+            .collect::<Vec<_>>()
     }
 
     /// Gets the objective value
@@ -1425,7 +1425,7 @@ mod test {
         problem.add_row(..3000, [x].iter().copied().zip([1.]));
         problem.add_row(..4000, [y].iter().copied().zip([1.]));
         problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
-        let mut model = problem.optimise(Sense::Maximise);
+        let model = problem.optimise(Sense::Maximise);
         // model.set_option("presolve", "off");
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
@@ -1475,7 +1475,7 @@ mod test {
         problem.add_row(..3000, [x].iter().copied().zip([1.]));
         problem.add_row(..4000, [y].iter().copied().zip([1.]));
         problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
-        let mut model = problem.optimise(Sense::Maximise);
+        let model = problem.optimise(Sense::Maximise);
 
         let (
             num_col,
