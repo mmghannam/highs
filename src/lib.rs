@@ -444,9 +444,9 @@ impl Model {
         Vec<Vec<(Col, f64)>>,
         Vec<VarType>,
     ) {
-        let mut num_col = unsafe { Highs_getNumCol(self.highs.ptr()) };
-        let mut num_row = unsafe { Highs_getNumRow(self.highs.ptr()) };
-        let mut num_nz = unsafe { Highs_getNumNz(self.highs.ptr()) };
+        let mut num_col = unsafe { Highs_getPresolvedNumCol(self.highs.ptr()) };
+        let mut num_row = unsafe { Highs_getPresolvedNumRow(self.highs.ptr()) };
+        let mut num_nz = unsafe { Highs_getPresolvedNumNz(self.highs.ptr()) };
 
         // Allocate arrays with the appropriate sizes
         let mut col_cost = vec![0.0; num_col as usize];
