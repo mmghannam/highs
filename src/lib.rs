@@ -427,6 +427,113 @@ impl Model {
         )
     }
 
+    /// Returns the LP data in the presolved problem
+    pub fn get_presolved_row_lp(
+        &self,
+    ) -> (
+        usize,
+        usize,
+        usize,
+        Sense,
+        f64,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<Vec<(Col, f64)>>,
+        Vec<VarType>,
+    ) {
+        let mut num_col = unsafe { Highs_getNumCol(self.highs.ptr()) };
+        let mut num_row = unsafe { Highs_getNumRow(self.highs.ptr()) };
+        let mut num_nz = unsafe { Highs_getNumNz(self.highs.ptr()) };
+
+        // Allocate arrays with the appropriate sizes
+        let mut col_cost = vec![0.0; num_col as usize];
+        let mut col_lower = vec![0.0; num_col as usize];
+        let mut col_upper = vec![0.0; num_col as usize];
+        let mut row_lower = vec![0.0; num_row as usize];
+        let mut row_upper = vec![0.0; num_row as usize];
+        let mut a_start = vec![0; num_row as usize];
+        let mut a_index = vec![0; num_nz as usize];
+        let mut a_value = vec![0.0; num_nz as usize];
+        let mut integrality = vec![0; num_col as usize];
+
+        let mut sense = 0i32;
+        let mut offset: f64 = 0.0;
+
+        let res = unsafe {
+            highs_call! {
+                Highs_getPresolvedLp(
+                    self.highs.ptr(),
+                    kHighsMatrixFormatRowwise,
+                    &mut num_col,
+                    &mut num_row,
+                    &mut num_nz,
+                    &mut sense,
+                    &mut offset,
+                    col_cost.as_mut_ptr(),
+                    col_lower.as_mut_ptr(),
+                    col_upper.as_mut_ptr(),
+                    row_lower.as_mut_ptr(),
+                    row_upper.as_mut_ptr(),
+                    a_start.as_mut_ptr(),
+                    a_index.as_mut_ptr(),
+                    a_value.as_mut_ptr(),
+                    integrality.as_mut_ptr()
+                )
+            }
+        };
+
+        let num_col = num_col as usize;
+        let num_row = num_row as usize;
+        let num_nz = num_nz as usize;
+
+        let integrality = integrality.iter().map(|v| (*v).into()).collect();
+
+        if res.is_err() {
+            panic!(
+                "Failed to call Highs_getLp, got error {:?}",
+                res.unwrap_err()
+            );
+        }
+
+        let mut row_data = Vec::with_capacity(num_row);
+        // println!("num_row: {}", num_row);
+        // println!("num_col: {}", num_col);
+        // println!("a_start: {:?}", a_start);
+        // println!("a_index: {:?}", a_index);
+        // println!("a_value: {:?}", a_value);
+        for i in 0..num_row {
+            let start = a_start[i] as usize;
+            let end = if i == (num_row - 1) {
+                num_nz
+            } else {
+                a_start[i + 1] as usize
+            };
+
+            let mut index_vals = Vec::with_capacity(end - start);
+            for j in start..end {
+                index_vals.push((a_index[j] as Col, a_value[j]));
+            }
+            row_data.push(index_vals);
+        }
+
+        (
+            num_col,
+            num_row,
+            num_nz,
+            sense.into(), // Convert to your Sense enum
+            offset,
+            col_cost.clone(),
+            col_lower.clone(),
+            col_upper.clone(),
+            row_lower.clone(),
+            row_upper.clone(),
+            row_data.clone(),
+            integrality,
+        )
+    }
     /// Presolve the current model
     pub fn presolve(&mut self) {
         let ret = unsafe { Highs_presolve(self.highs.mut_ptr()) };
@@ -462,7 +569,7 @@ impl Model {
     /// Returns an error if the problem is incoherent
     pub fn try_new<P: Into<Problem<ColMatrix>>>(problem: P) -> Result<Self, HighsStatus> {
         let mut highs = HighsPtr::default();
-        highs.make_quiet();
+        // highs.make_quiet();
         let problem = problem.into();
         log::debug!(
             "Adding a problem with {} variables and {} constraints to HiGHS",
@@ -1083,7 +1190,13 @@ impl SolvedModel {
     /// Postsolve a solution
     pub fn postsolve(&mut self, col_vals: Vec<(Col, f64)>) -> Vec<(Col, f64)> {
         let mut col_vals = col_vals;
-        let mut col_vals_ptr = col_vals.as_mut_ptr();
+        let num_cols = self.num_cols();
+        let mut flat_col_vals = vec![0.0; num_cols];
+        for (col, val) in col_vals.iter_mut() {
+            flat_col_vals[*col as usize] = *val;
+        }
+        let mut col_vals_ptr = flat_col_vals.as_mut_ptr();
+        println!("input {:?}", flat_col_vals);
         let ret = unsafe {
             Highs_postsolve(
                 self.highs.mut_ptr(),
@@ -1093,7 +1206,16 @@ impl SolvedModel {
             )
         };
         assert_ne!(ret, STATUS_ERROR, "postsolve failed");
-        col_vals
+        println!("postsolved: {:?}", flat_col_vals);
+
+        let unflattened = flat_col_vals
+            .into_iter()
+            .enumerate()
+            .filter(|&x| x.1 != 0.)
+            .map(|x| (x.0 as Col, x.1))
+            .collect::<Vec<_>>();
+
+        unflattened
     }
 
     /// Gets the objective value
@@ -1429,8 +1551,25 @@ mod test {
             integrality,
         ) = model.get_row_lp();
 
+        let (
+            num_col,
+            num_row,
+            num_nz,
+            sense,
+            offset,
+            col_cost,
+            col_lower,
+            col_upper,
+            row_lower,
+            row_upper,
+            row_data,
+            integrality,
+        ) = model.get_presolved_row_lp();
+        assert_eq!(num_row, 1);
+        println!("{:?}", model.get_presolved_row_lp());
+
         let mut model = model.solve();
-        let col_vals = model.postsolve(vec![(x, 0.0)]);
+        let col_vals = model.postsolve(vec![(x, 1.0), (y, 3.0)]);
         println!("col_vals {:?}", col_vals);
     }
 
