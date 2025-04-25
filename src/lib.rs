@@ -1179,12 +1179,70 @@ impl SolvedModel {
         }
 
         let num_nonzeros = unsafe { *solution_num_nz };
+        println!("solution_index: {:?}", solution_index);
+        println!("num_nonzeros: {:?}", num_nonzeros);
         solution_index = solution_index
             .into_iter()
             .take(num_nonzeros as usize)
             .collect();
 
         (x, solution_index)
+    }
+
+    /// Gets a row of the basis inverse matrix B^{-1}
+    pub fn get_basis_inverse_row(&self, row: Row) -> (Vec<f64>, Vec<HighsInt>) {
+        let mut row_vector = vec![0.; self.num_rows()]; 
+        let row_num_nz: *mut HighsInt = &mut 0;
+        let mut row_index: Vec<HighsInt> = vec![0; self.num_rows()];
+
+        unsafe {
+            highs_call! {
+                Highs_getBasisInverseRow(
+                    self.highs.unsafe_mut_ptr(),
+                    row.try_into().unwrap(),
+                    row_vector.as_mut_ptr(),
+                    row_num_nz,
+                    row_index.as_mut_ptr()
+                )
+            }
+            .map_err(|e| {
+                println!("Error while getting basis inverse row: {:?}", e);
+            })
+            .unwrap();
+        }
+
+        let num_nonzeros = unsafe { *row_num_nz };
+        row_index = row_index.into_iter().take(num_nonzeros as usize).collect();
+
+        (row_vector, row_index)
+    }
+
+    /// Gets a row of the basis inverse matrix B^{-1}
+    pub fn get_basis_inverse_col(&self, col: Col) -> (Vec<f64>, Vec<HighsInt>) {
+        let mut col_vector = vec![0.; self.num_rows()];
+        let col_num_nz: *mut HighsInt = &mut 0;
+        let mut col_index = vec![0; self.num_rows()];
+
+        unsafe {
+            highs_call! {
+                Highs_getBasisInverseCol(
+                    self.highs.unsafe_mut_ptr(),
+                    col.try_into().unwrap(),
+                    col_vector.as_mut_ptr(),
+                    col_num_nz,
+                    col_index.as_mut_ptr()
+                )
+            }
+            .map_err(|e| {
+                println!("Error while getting basis inverse column: {:?}", e);
+            })
+            .unwrap();
+        }
+
+        let num_nonzeros = unsafe { *col_num_nz };
+        col_index = col_index.into_iter().take(num_nonzeros as usize).collect();
+
+        (col_vector, col_index)
     }
 
     /// Postsolve a solution
@@ -1207,8 +1265,6 @@ impl SolvedModel {
         };
         assert_ne!(ret, STATUS_ERROR, "postsolve failed");
         println!("postsolved: {:?}", flat_col_vals);
-
-        
 
         flat_col_vals
             .into_iter()
@@ -1629,5 +1685,63 @@ mod test {
         // println!("num_col {:?}", num_col);
         // let model = model.solve();
         // assert_eq!(model.status(), HighsModelStatus::Infeasible);
+    }
+
+    #[test]
+    fn test_basis_methods2() {
+        let mut problem = RowProblem::new();
+        let x = problem.add_column(5.5, 0..);
+        let y = problem.add_column(2.1, 0..);
+        problem.add_row(..2, vec![(x, -1.), (y, 1.)]);
+        problem.add_row(..17, vec![(x, 8.), (y, 2.)]);
+        let model = problem.optimise(Sense::Maximise);
+        // model.set_option("presolve", "off");
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        let (col_statuses, row_statuses) = solved.get_basis_status();
+        println!("col_statuses: {:?}", col_statuses);
+        println!("row_statuses: {:?}", row_statuses);
+        // assert_eq!(col_statuses, vec![BasisStatus::Basic, BasisStatus::Basic]);
+        // assert_eq!(
+        //     row_statuses,
+        //     vec![BasisStatus::Basic, BasisStatus::Upper, BasisStatus::Upper]
+        // );
+        let (basic_cols, basic_rows) = solved.get_basic_vars();
+        println!(
+            "\nbasic cols: {:?},\nbasic rows: {:?}",
+            basic_cols, basic_rows
+        );
+        // assert_eq!(basic_cols.len(), 2);
+        for col in basic_cols {
+            // assert_eq!(col_statuses[col], BasisStatus::Basic);
+        }
+        // assert_eq!(basic_rows.len(), 1);
+        for row in basic_rows {
+            // assert_eq!(row_statuses[row], BasisStatus::Basic);
+        }
+
+        println!("reduced rows:");
+        for i in 0..solved.num_rows() {
+            let reduced_row = solved.get_reduced_row(i);
+            println!("{:?}", reduced_row);
+        }
+
+        println!("reduced cols:");
+        for i in 0..solved.num_cols() {
+            let reduced_col = solved.get_reduced_column(i);
+            println!("{:?}", reduced_col);
+        }
+
+        println!("basis sol:");
+        let basis_sol = solved.get_basis_sol(vec![2., 17.]);
+        println!("{:?}", basis_sol);
+        assert_eq!(basis_sol.0.len(), solved.num_rows());
+
+        // get the basis inverse row
+        for i in 0..solved.num_rows() {
+            let basis_inverse_row = solved.get_basis_inverse_row(i);
+            println!("basis_inverse_row: {:?}", basis_inverse_row);
+        }
+
     }
 }
