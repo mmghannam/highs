@@ -1588,6 +1588,12 @@ mod test {
             println!("{:?}", reduced_col);
         }
 
+        println!("basis inverse rows:");
+        for i in 0..solved.num_rows() {
+            let basis_inverse_row = solved.get_basis_inverse_row(i);
+            println!("{:?}", basis_inverse_row);
+        }
+
         println!("basis sol:");
         let basis_sol = solved.get_basis_sol(vec![3000., 4000., 5000.]);
         println!("{:?}", basis_sol);
