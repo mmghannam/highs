@@ -283,6 +283,7 @@ pub enum VarType {
     SemiInteger,
 }
 
+#[allow(non_upper_case_globals)]
 impl From<HighsInt> for VarType {
     fn from(value: HighsInt) -> Self {
         match value {
@@ -1055,7 +1056,7 @@ impl SolvedModel {
     }
 
     /// Get the basis variables
-    pub fn get_basic_vars(&self) -> (Vec<Col>, Vec<Row>) {
+    pub fn get_basic_vars(&self) -> Vec<BasicVar> {
         let mut basis_ids = vec![0; self.num_rows()];
         unsafe {
             highs_call! {
@@ -1067,18 +1068,17 @@ impl SolvedModel {
             .unwrap();
         }
 
-        let mut col_vars = Vec::with_capacity(self.num_rows());
-        let mut row_vars = Vec::with_capacity(self.num_rows());
+        let mut res = Vec::with_capacity(self.num_rows());
 
         for basis_var in basis_ids.into_iter() {
             if basis_var >= 0 {
-                col_vars.push(basis_var as Col);
+                res.push(BasicVar::Col(basis_var as Col));
             } else {
-                row_vars.push((-basis_var - 1) as Row);
+                res.push(BasicVar::Row((-basis_var - 1) as Row));
             }
         }
 
-        (col_vars, row_vars)
+        res
     }
 
     /// Get basis status
@@ -1095,7 +1095,8 @@ impl SolvedModel {
             }
             .map_err(|e| {
                 println!("Error while getting basis status: {:?}", e);
-            });
+            })
+            .unwrap();
         }
 
         let col_status = col_status.iter().map(|&s| s.into()).collect();
@@ -1179,8 +1180,8 @@ impl SolvedModel {
         }
 
         let num_nonzeros = unsafe { *solution_num_nz };
-        println!("solution_index: {:?}", solution_index);
-        println!("num_nonzeros: {:?}", num_nonzeros);
+        // println!("solution_index: {:?}", solution_index);
+        // println!("num_nonzeros: {:?}", num_nonzeros);
         solution_index = solution_index
             .into_iter()
             .take(num_nonzeros as usize)
@@ -1191,7 +1192,7 @@ impl SolvedModel {
 
     /// Gets a row of the basis inverse matrix B^{-1}
     pub fn get_basis_inverse_row(&self, row: Row) -> (Vec<f64>, Vec<HighsInt>) {
-        let mut row_vector = vec![0.; self.num_rows()]; 
+        let mut row_vector = vec![0.; self.num_rows()];
         let row_num_nz: *mut HighsInt = &mut 0;
         let mut row_index: Vec<HighsInt> = vec![0; self.num_rows()];
 
@@ -1278,6 +1279,50 @@ impl SolvedModel {
     pub fn obj_val(&self) -> f64 {
         unsafe { Highs_getObjectiveValue(self.highs.ptr()) }
     }
+
+    /// Get Gomory Mixed-Integer (GMI) cut for a given basic variable
+    /// Returns the coefficients and constant term for the GMI cut
+    /// The cut will be of the form: sum(coef[i] * x[i]) <= constant
+    pub fn get_gmi(&self, _row_id: Row) -> Option<(Vec<f64>, f64)> {
+        todo!();
+        // Get the solution to verify the variable is basic
+        // let basic_vars = self.get_basic_vars();
+
+        // let basis_inverse_row = self.get_basis_inverse_row(row_id);
+
+        // // Get basis inverse row for this variable's row
+        // let (basic_cols, basic_rows) = self.get_basic_vars();
+        // let row_idx = basic_rows.iter().position(|&r| self[r] == var_idx)?;
+        // let (row_vec, indices) = self.get_basis_inverse_row(row_idx as Row);
+
+        // // Get the solution values
+        // let solution = self.get_solution();
+        // let x_vals = solution.columns();
+
+        // // Generate GMI cut coefficients
+        // let mut cut_coefs = vec![0.0; self.num_cols()];
+        // let mut constant = 0.0;
+        // let f0 = x_vals[var_idx].fract(); // fractional part of basic variable
+
+        // if f0 < 1e-6 || f0 > 1.0 - 1e-6 {
+        //     return None; // Skip if the variable is already (nearly) integer
+        // }
+
+        // for (idx, &coef) in indices.iter().enumerate() {
+        //     let val = row_vec[idx];
+        //     let f = val.fract();
+
+        //     if val >= 0.0 {
+        //         cut_coefs[coef as usize] = f / f0;
+        //     } else {
+        //         cut_coefs[coef as usize] = (1.0 - f) / (1.0 - f0);
+        //     }
+        // }
+
+        // constant = 1.0;
+
+        // Some((cut_coefs, constant))
+    }
 }
 
 /// Concrete values of the solution
@@ -1341,6 +1386,16 @@ pub enum BasisStatus {
     Zero,
 }
 
+/// A basic variable is either a column or a row
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BasicVar {
+    /// Basic variable
+    Col(Col),
+    /// Basic row
+    Row(Row),
+}
+
+#[allow(non_upper_case_globals)]
 impl From<HighsInt> for BasisStatus {
     fn from(status: HighsInt) -> Self {
         match status {
@@ -1491,16 +1546,32 @@ mod test {
             row_statuses,
             vec![BasisStatus::Basic, BasisStatus::Upper, BasisStatus::Upper]
         );
-        let (basic_cols, basic_rows) = solved.get_basic_vars();
-        println!(
-            "\nbasic cols: {:?},\nbasic rows: {:?}",
-            basic_cols, basic_rows
-        );
-        assert_eq!(basic_cols.len(), 2);
-        for col in basic_cols {
-            assert_eq!(col_statuses[col], BasisStatus::Basic);
+        let basic_vars = solved.get_basic_vars();
+        println!("\nbasic vars: {:?}", basic_vars);
+        assert_eq!(basic_vars.len(), 3);
+        for var in basic_vars {
+            match var {
+                BasicVar::Col(c) => {
+                    assert_eq!(col_statuses[c], BasisStatus::Basic);
+                }
+                BasicVar::Row(r) => {
+                    assert_eq!(row_statuses[r], BasisStatus::Basic);
+                }
+            }
         }
-        assert_eq!(basic_rows.len(), 1);
+
+        let basic_rows = solved
+            .get_basic_vars()
+            .iter()
+            .filter_map(|var| {
+                if let BasicVar::Row(r) = var {
+                    Some(*r)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
         for row in basic_rows {
             assert_eq!(row_statuses[row], BasisStatus::Basic);
         }
@@ -1593,33 +1664,33 @@ mod test {
         model.presolve();
 
         let (
-            num_col,
-            num_row,
-            num_nz,
-            sense,
-            offset,
-            col_cost,
-            col_lower,
-            col_upper,
-            row_lower,
-            row_upper,
-            row_data,
-            integrality,
+            _num_col,
+            _num_row,
+            _num_nz,
+            _sense,
+            _offset,
+            _col_cost,
+            _col_lower,
+            _col_upper,
+            _row_lower,
+            _row_upper,
+            _row_data,
+            _integrality,
         ) = model.get_row_lp();
 
         let (
-            num_col,
+            _num_col,
             num_row,
-            num_nz,
-            sense,
-            offset,
-            col_cost,
-            col_lower,
-            col_upper,
-            row_lower,
-            row_upper,
-            row_data,
-            integrality,
+            _num_nz,
+            _sense,
+            _offset,
+            _col_cost,
+            _col_lower,
+            _col_upper,
+            _row_lower,
+            _row_upper,
+            _row_data,
+            _integrality,
         ) = model.get_presolved_row_lp();
         assert_eq!(num_row, 1);
         println!("{:?}", model.get_presolved_row_lp());
@@ -1638,18 +1709,18 @@ mod test {
         assert_eq!(model.num_cols(), 2);
 
         let (
-            num_col,
-            num_row,
-            num_nz,
-            sense,
-            offset,
-            col_cost,
-            col_lower,
-            col_upper,
-            row_lower,
-            row_upper,
+            _num_col,
+            _num_row,
+            _num_nz,
+            _sense,
+            _offset,
+            _col_cost,
+            _col_lower,
+            _col_upper,
+            _row_lower,
+            _row_upper,
             row_data,
-            integrality,
+            _integrality,
         ) = model.get_row_lp();
 
         for row in row_data.iter() {
@@ -1668,18 +1739,18 @@ mod test {
         model.read("../lio/tests/data/p0201.mps");
 
         let (
-            num_col,
-            num_row,
-            num_nz,
-            sense,
-            offset,
-            col_cost,
-            col_lower,
-            col_upper,
-            row_lower,
-            row_upper,
-            row_data,
-            integrality,
+            _num_col,
+            _num_row,
+            _num_nz,
+            _sense,
+            _offset,
+            _col_cost,
+            _col_lower,
+            _col_upper,
+            _row_lower,
+            _row_upper,
+            _row_data,
+            _integrality,
         ) = model.get_row_lp();
 
         // println!("num_col {:?}", num_col);
@@ -1701,23 +1772,34 @@ mod test {
         let (col_statuses, row_statuses) = solved.get_basis_status();
         println!("col_statuses: {:?}", col_statuses);
         println!("row_statuses: {:?}", row_statuses);
-        // assert_eq!(col_statuses, vec![BasisStatus::Basic, BasisStatus::Basic]);
-        // assert_eq!(
-        //     row_statuses,
-        //     vec![BasisStatus::Basic, BasisStatus::Upper, BasisStatus::Upper]
-        // );
-        let (basic_cols, basic_rows) = solved.get_basic_vars();
+        let basic_vars = solved.get_basic_vars();
+        println!("\nbasic vars: {:?}", basic_vars);
+
+        let mut basic_cols = vec![];
+        let mut basic_rows = vec![];
+        for var in basic_vars {
+            match var {
+                BasicVar::Col(c) => {
+                    basic_cols.push(c);
+                    assert_eq!(col_statuses[c], BasisStatus::Basic);
+                }
+                BasicVar::Row(r) => {
+                    basic_rows.push(r);
+                    assert_eq!(row_statuses[r], BasisStatus::Basic);
+                }
+            }
+        }
         println!(
             "\nbasic cols: {:?},\nbasic rows: {:?}",
             basic_cols, basic_rows
         );
         // assert_eq!(basic_cols.len(), 2);
         for col in basic_cols {
-            // assert_eq!(col_statuses[col], BasisStatus::Basic);
+            assert_eq!(col_statuses[col], BasisStatus::Basic);
         }
         // assert_eq!(basic_rows.len(), 1);
         for row in basic_rows {
-            // assert_eq!(row_statuses[row], BasisStatus::Basic);
+            assert_eq!(row_statuses[row], BasisStatus::Basic);
         }
 
         println!("reduced rows:");
@@ -1726,11 +1808,11 @@ mod test {
             println!("{:?}", reduced_row);
         }
 
-        println!("reduced cols:");
-        for i in 0..solved.num_cols() {
-            let reduced_col = solved.get_reduced_column(i);
-            println!("{:?}", reduced_col);
-        }
+        // println!("reduced cols:");
+        // for i in 0..solved.num_cols() {
+        //     let reduced_col = solved.get_reduced_column(i);
+        //     println!("{:?}", reduced_col);
+        // }
 
         println!("basis sol:");
         let basis_sol = solved.get_basis_sol(vec![2., 17.]);
@@ -1742,6 +1824,19 @@ mod test {
             let basis_inverse_row = solved.get_basis_inverse_row(i);
             println!("basis_inverse_row: {:?}", basis_inverse_row);
         }
+    }
 
+    #[test]
+    fn test_gmi() {
+        let mut problem = RowProblem::new();
+        let x = problem.add_integer_column(1.0, 0..);
+        let y = problem.add_column(1.0, 0..);
+        problem.add_row(..1.0, vec![(x, 1.0), (y, 1.0)]);
+        let model = problem.optimise(Sense::Maximise);
+        // model.set_option("presolve", "off");
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        let gmi = solved.get_gmi(x);
+        println!("gmi: {:?}", gmi);
     }
 }
