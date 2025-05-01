@@ -1106,9 +1106,10 @@ impl SolvedModel {
 
     /// Get the reduced row
     pub fn get_reduced_row(&self, row: Row) -> (Vec<f64>, Vec<HighsInt>) {
-        let mut reduced_row = vec![0.; self.num_rows()];
+        let size = self.num_rows().max(self.num_cols());
+        let mut reduced_row = vec![0.; size];
         let row_non_zeros: *mut HighsInt = &mut 0;
-        let mut row_index: Vec<HighsInt> = vec![0; self.num_rows()];
+        let mut row_index: Vec<HighsInt> = vec![0; size];
         unsafe {
             highs_call! {
                 Highs_getReducedRow(
@@ -1769,8 +1770,11 @@ mod test {
         let mut problem = RowProblem::new();
         let x = problem.add_column(5.5, 0..);
         let y = problem.add_column(2.1, 0..);
-        problem.add_row(..2, vec![(x, -1.), (y, 1.)]);
+        let z = problem.add_column(2.1, 0..5);
+        let za = problem.add_column(2.1, 0..5);
+        problem.add_row(..2, vec![(x, -1.), (y, 1.), (z, 1.0), (za, 1.0)]);
         problem.add_row(..17, vec![(x, 8.), (y, 2.)]);
+        problem.add_row(..11, [x, y].iter().copied().zip([5., 2.]));
         let model = problem.optimise(Sense::Maximise);
         // model.set_option("presolve", "off");
         let solved = model.solve();
@@ -1821,7 +1825,7 @@ mod test {
         // }
 
         println!("basis sol:");
-        let basis_sol = solved.get_basis_sol(vec![2., 17.]);
+        let basis_sol = solved.get_basis_sol(vec![2., 17., 11.]);
         println!("{:?}", basis_sol);
         assert_eq!(basis_sol.0.len(), solved.num_rows());
 
@@ -1830,6 +1834,8 @@ mod test {
             let basis_inverse_row = solved.get_basis_inverse_row(i);
             println!("basis_inverse_row: {:?}", basis_inverse_row);
         }
+
+        println!("objective value: {:?}", solved.obj_val());
     }
 
     #[test]
@@ -1844,5 +1850,47 @@ mod test {
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
         let gmi = solved.get_gmi(x);
         println!("gmi: {:?}", gmi);
+    }
+
+
+    #[test]
+    fn test_basis_methods3() {
+        let mut problem = RowProblem::new();
+        let x = problem.add_column(40.0, 0..);
+        let y = problem.add_column(50.0, 0..);
+        problem.add_row(..12, [x, y].iter().copied().zip([2., 3.]));
+        problem.add_row(..9, [y].iter().copied().zip([3., 1.]));
+        let model = problem.optimise(Sense::Maximise);
+        // model.set_option("presolve", "off");
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        let (col_statuses, row_statuses) = solved.get_basis_status();
+        println!("col_statuses: {:?}", col_statuses);
+        println!("row_statuses: {:?}", row_statuses);
+        let basic_vars = solved.get_basic_vars();
+        println!("\nbasic vars: {:?}", basic_vars);
+
+        println!("reduced rows:");
+        for i in 0..solved.num_rows() {
+            let reduced_row = solved.get_reduced_row(i);
+            println!("{:?}", reduced_row);
+        }
+
+        // println!("reduced cols:");
+        // for i in 0..solved.num_cols() {
+        //     let reduced_col = solved.get_reduced_column(i);
+        //     println!("{:?}", reduced_col);
+        // }
+
+        println!("basis inverse rows:");
+        for i in 0..solved.num_rows() {
+            let basis_inverse_row = solved.get_basis_inverse_row(i);
+            println!("{:?}", basis_inverse_row);
+        }
+
+        println!("basis sol:");
+        let basis_sol = solved.get_basis_sol(vec![12., 9.]);
+        println!("{:?}", basis_sol);
+        assert_eq!(basis_sol.0.len(), solved.num_rows());
     }
 }
