@@ -1106,10 +1106,9 @@ impl SolvedModel {
 
     /// Get the reduced row
     pub fn get_reduced_row(&self, row: Row) -> (Vec<f64>, Vec<HighsInt>) {
-        let size = self.num_rows().max(self.num_cols());
-        let mut reduced_row = vec![0.; size];
+        let mut reduced_row = vec![0.; self.num_cols()];
         let row_non_zeros: *mut HighsInt = &mut 0;
-        let mut row_index: Vec<HighsInt> = vec![0; size];
+        let mut row_index: Vec<HighsInt> = vec![0; self.num_cols()];
         unsafe {
             highs_call! {
                 Highs_getReducedRow(
