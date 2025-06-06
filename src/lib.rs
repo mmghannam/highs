@@ -998,13 +998,13 @@ impl HighsPtr {
     }
 
     /// Number of variables
-    fn num_cols(&self) -> Result<usize, TryFromIntError> {
+    pub fn num_cols(&self) -> Result<usize, TryFromIntError> {
         let n = unsafe { Highs_getNumCols(self.0) };
         n.try_into()
     }
 
     /// Number of constraints
-    fn num_rows(&self) -> Result<usize, TryFromIntError> {
+    pub fn num_rows(&self) -> Result<usize, TryFromIntError> {
         let n = unsafe { Highs_getNumRows(self.0) };
         n.try_into()
     }
@@ -1046,12 +1046,12 @@ impl SolvedModel {
     }
 
     /// Number of variables
-    fn num_cols(&self) -> usize {
+    pub fn num_cols(&self) -> usize {
         self.highs.num_cols().expect("invalid number of columns")
     }
 
     /// Number of constraints
-    fn num_rows(&self) -> usize {
+    pub fn num_rows(&self) -> usize {
         self.highs.num_rows().expect("invalid number of rows")
     }
 
