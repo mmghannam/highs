@@ -237,13 +237,13 @@ macro_rules! highs_call {
 }
 
 /// A model to solve
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Model {
     highs: HighsPtr,
 }
 
 /// A solved model
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SolvedModel {
     highs: HighsPtr,
 }
@@ -949,7 +949,7 @@ impl From<SolvedModel> for Model {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct HighsPtr(*mut c_void);
 
 impl Drop for HighsPtr {
