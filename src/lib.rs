@@ -949,8 +949,9 @@ impl From<SolvedModel> for Model {
     }
 }
 
+/// Wrapper around a HiGHS pointer.
 #[derive(Debug, Clone)]
-struct HighsPtr(*mut c_void);
+pub struct HighsPtr(*mut c_void);
 
 impl Drop for HighsPtr {
     fn drop(&mut self) {
@@ -961,6 +962,140 @@ impl Drop for HighsPtr {
 impl Default for HighsPtr {
     fn default() -> Self {
         Self(unsafe { Highs_create() })
+    }
+}
+
+/// Trait to give access to methods that are common to both `Model` and `SolvedModel`.
+pub trait LikeModel {
+    /// Get data associated with multiple adjacent rows from the model
+    fn get_rows_by_range(&self, from_row: Row, to_row: Row) -> Result<
+        (
+            Vec<f64>,
+            Vec<f64>,
+            usize,
+            Vec<HighsInt>,
+            Vec<HighsInt>,
+            Vec<f64>,
+        ),
+        HighsStatus>;
+
+    /// Get rows by range in a more structured format
+    /// Returns a vector of row data with bounds and constraint coefficients
+    fn get_rows_by_range_structured(
+        &self,
+        from_row: Row,
+        to_row: Row,
+    ) -> Result<Vec<RowData>, HighsStatus> {
+        let (lower, upper, _num_nz, matrix_start, matrix_index, matrix_value) =
+            self.get_rows_by_range(from_row, to_row)?;
+
+        let num_rows = (to_row - from_row + 1) as usize;
+        let mut rows = Vec::with_capacity(num_rows);
+
+        for i in 0..num_rows {
+            let start = matrix_start[i] as usize;
+            let end = if i == num_rows - 1 {
+                matrix_value.len()
+            } else {
+                matrix_start[i + 1] as usize
+            };
+
+            let mut coefficients = Vec::with_capacity(end - start);
+            for j in start..end {
+                coefficients.push((matrix_index[j] as Col, matrix_value[j]));
+            }
+
+            rows.push(RowData {
+                lower_bound: lower[i],
+                upper_bound: upper[i],
+                coefficients,
+            });
+        }
+
+        Ok(rows)
+    }
+
+    /// Get data for a single row/constraint
+    /// Returns the row bounds and constraint coefficients
+    fn get_row(&self, row: Row) -> Result<RowData, HighsStatus> {
+        let mut row_data = self.get_rows_by_range_structured(row, row)?;
+        Ok(row_data.pop().unwrap()) // Safe unwrap since we know we have exactly one row
+    }
+}
+
+impl<H: HasHighsPtr> LikeModel for H {
+    /// Get data associated with multiple adjacent rows from the model
+    /// Returns (lower_bounds, upper_bounds, num_nz, matrix_start, matrix_index, matrix_value)
+    ///
+    /// To query the constraint coefficients, this function should be called twice:
+    /// 1. First call with matrix_start, matrix_index, and matrix_value as None to get num_nz
+    /// 2. Second call with properly allocated vectors to get the actual data
+    fn get_rows_by_range(
+        &self,
+        from_row: Row,
+        to_row: Row,
+    ) -> Result<
+        (
+            Vec<f64>,
+            Vec<f64>,
+            usize,
+            Vec<HighsInt>,
+            Vec<HighsInt>,
+            Vec<f64>,
+        ),
+        HighsStatus,
+    > {
+        let num_rows = (to_row - from_row + 1) as usize;
+
+        // First call to get the number of non-zero elements
+        let mut lower = vec![0.0; num_rows];
+        let mut upper = vec![0.0; num_rows];
+        let mut num_nz = 0i32;
+
+        unsafe {
+            highs_call!(Highs_getRowsByRange(
+                self.highs_ptr().unsafe_mut_ptr(),
+                from_row as c_int,
+                to_row as c_int,
+                &mut (num_rows as c_int),
+                lower.as_mut_ptr(),
+                upper.as_mut_ptr(),
+                &mut num_nz,
+                std::ptr::null_mut(), // matrix_start
+                std::ptr::null_mut(), // matrix_index
+                std::ptr::null_mut()  // matrix_value
+            ))?;
+        }
+
+        // Second call to get the actual matrix data
+        let mut matrix_start = vec![0; num_rows];
+        let mut matrix_index = vec![0; num_nz as usize];
+        let mut matrix_value = vec![0.0; num_nz as usize];
+        let mut num_rows_out = num_rows as c_int;
+
+        unsafe {
+            highs_call!(Highs_getRowsByRange(
+                self.highs_ptr().unsafe_mut_ptr(),
+                from_row as c_int,
+                to_row as c_int,
+                &mut num_rows_out,
+                lower.as_mut_ptr(),
+                upper.as_mut_ptr(),
+                &mut num_nz,
+                matrix_start.as_mut_ptr(),
+                matrix_index.as_mut_ptr(),
+                matrix_value.as_mut_ptr()
+            ))?;
+        }
+
+        Ok((
+            lower,
+            upper,
+            num_nz as usize,
+            matrix_start,
+            matrix_index,
+            matrix_value,
+        ))
     }
 }
 
@@ -1280,165 +1415,34 @@ impl SolvedModel {
         unsafe { Highs_getObjectiveValue(self.highs.ptr()) }
     }
 
-    /// Get data associated with multiple adjacent rows from the model
-    /// Returns (lower_bounds, upper_bounds, num_nz, matrix_start, matrix_index, matrix_value)
-    ///
-    /// To query the constraint coefficients, this function should be called twice:
-    /// 1. First call with matrix_start, matrix_index, and matrix_value as None to get num_nz
-    /// 2. Second call with properly allocated vectors to get the actual data
-    pub fn get_rows_by_range(
-        &self,
-        from_row: Row,
-        to_row: Row,
-    ) -> Result<
-        (
-            Vec<f64>,
-            Vec<f64>,
-            usize,
-            Vec<HighsInt>,
-            Vec<HighsInt>,
-            Vec<f64>,
-        ),
-        HighsStatus,
-    > {
-        let num_rows = (to_row - from_row + 1) as usize;
+}
 
-        // First call to get the number of non-zero elements
-        let mut lower = vec![0.0; num_rows];
-        let mut upper = vec![0.0; num_rows];
-        let mut num_nz = 0i32;
+/// Trait for types that can provide access to the underlying HiGHS pointer
+pub trait HasHighsPtr {
+    /// Get the underlying HiGHS pointer
+    fn highs_ptr(&self) -> &HighsPtr;
 
-        unsafe {
-            highs_call!(Highs_getRowsByRange(
-                self.highs.unsafe_mut_ptr(),
-                from_row as c_int,
-                to_row as c_int,
-                &mut (num_rows as c_int),
-                lower.as_mut_ptr(),
-                upper.as_mut_ptr(),
-                &mut num_nz,
-                std::ptr::null_mut(), // matrix_start
-                std::ptr::null_mut(), // matrix_index
-                std::ptr::null_mut()  // matrix_value
-            ))?;
-        }
+    /// Get a mutable reference to the underlying HiGHS pointer
+    fn highs_mut_ptr(&mut self) -> &mut HighsPtr;
+}
 
-        // Second call to get the actual matrix data
-        let mut matrix_start = vec![0; num_rows];
-        let mut matrix_index = vec![0; num_nz as usize];
-        let mut matrix_value = vec![0.0; num_nz as usize];
-        let mut num_rows_out = num_rows as c_int;
-
-        unsafe {
-            highs_call!(Highs_getRowsByRange(
-                self.highs.unsafe_mut_ptr(),
-                from_row as c_int,
-                to_row as c_int,
-                &mut num_rows_out,
-                lower.as_mut_ptr(),
-                upper.as_mut_ptr(),
-                &mut num_nz,
-                matrix_start.as_mut_ptr(),
-                matrix_index.as_mut_ptr(),
-                matrix_value.as_mut_ptr()
-            ))?;
-        }
-
-        Ok((
-            lower,
-            upper,
-            num_nz as usize,
-            matrix_start,
-            matrix_index,
-            matrix_value,
-        ))
+impl HasHighsPtr for Model {
+    fn highs_ptr(&self) -> &HighsPtr {
+        &self.highs
     }
 
-    /// Get rows by range in a more structured format
-    /// Returns a vector of row data with bounds and constraint coefficients
-    pub fn get_rows_by_range_structured(
-        &self,
-        from_row: Row,
-        to_row: Row,
-    ) -> Result<Vec<RowData>, HighsStatus> {
-        let (lower, upper, _num_nz, matrix_start, matrix_index, matrix_value) =
-            self.get_rows_by_range(from_row, to_row)?;
+    fn highs_mut_ptr(&mut self) -> &mut HighsPtr {
+        &mut self.highs
+    }
+}
 
-        let num_rows = (to_row - from_row + 1) as usize;
-        let mut rows = Vec::with_capacity(num_rows);
-
-        for i in 0..num_rows {
-            let start = matrix_start[i] as usize;
-            let end = if i == num_rows - 1 {
-                matrix_value.len()
-            } else {
-                matrix_start[i + 1] as usize
-            };
-
-            let mut coefficients = Vec::with_capacity(end - start);
-            for j in start..end {
-                coefficients.push((matrix_index[j] as Col, matrix_value[j]));
-            }
-
-            rows.push(RowData {
-                lower_bound: lower[i],
-                upper_bound: upper[i],
-                coefficients,
-            });
-        }
-
-        Ok(rows)
+impl HasHighsPtr for SolvedModel {
+    fn highs_ptr(&self) -> &HighsPtr {
+        &self.highs
     }
 
-    /// Get data for a single row/constraint
-    /// Returns the row bounds and constraint coefficients
-    pub fn get_row(&self, row: Row) -> Result<RowData, HighsStatus> {
-        let mut row_data = self.get_rows_by_range_structured(row, row)?;
-        Ok(row_data.pop().unwrap()) // Safe unwrap since we know we have exactly one row
-    }
-
-    /// Get Gomory Mixed-Integer (GMI) cut for a given basic variable
-    /// Returns the coefficients and constant term for the GMI cut
-    /// The cut will be of the form: sum(coef[i] * x[i]) <= constant
-    pub fn get_gmi(&self, _row_id: Row) -> Option<(Vec<f64>, f64)> {
-        todo!();
-        // Get the solution to verify the variable is basic
-        // let basic_vars = self.get_basic_vars();
-
-        // let basis_inverse_row = self.get_basis_inverse_row(row_id);
-
-        // // Get basis inverse row for this variable's row
-        // let (basic_cols, basic_rows) = self.get_basic_vars();
-        // let row_idx = basic_rows.iter().position(|&r| self[r] == var_idx)?;
-        // let (row_vec, indices) = self.get_basis_inverse_row(row_idx as Row);
-
-        // // Get the solution values
-        // let solution = self.get_solution();
-        // let x_vals = solution.columns();
-
-        // // Generate GMI cut coefficients
-        // let mut cut_coefs = vec![0.0; self.num_cols()];
-        // let mut constant = 0.0;
-        // let f0 = x_vals[var_idx].fract(); // fractional part of basic variable
-
-        // if f0 < 1e-6 || f0 > 1.0 - 1e-6 {
-        //     return None; // Skip if the variable is already (nearly) integer
-        // }
-
-        // for (idx, &coef) in indices.iter().enumerate() {
-        //     let val = row_vec[idx];
-        //     let f = val.fract();
-
-        //     if val >= 0.0 {
-        //         cut_coefs[coef as usize] = f / f0;
-        //     } else {
-        //         cut_coefs[coef as usize] = (1.0 - f) / (1.0 - f0);
-        //     }
-        // }
-
-        // constant = 1.0;
-
-        // Some((cut_coefs, constant))
+    fn highs_mut_ptr(&mut self) -> &mut HighsPtr {
+        &mut self.highs
     }
 }
 
@@ -1963,20 +1967,6 @@ mod test {
         }
 
         println!("objective value: {:?}", solved.obj_val());
-    }
-
-    #[test]
-    fn test_gmi() {
-        let mut problem = RowProblem::new();
-        let x = problem.add_integer_column(1.0, 0..);
-        let y = problem.add_column(1.0, 0..);
-        problem.add_row(..1.0, vec![(x, 1.0), (y, 1.0)]);
-        let model = problem.optimise(Sense::Maximise);
-        // model.set_option("presolve", "off");
-        let solved = model.solve();
-        assert_eq!(solved.status(), HighsModelStatus::Optimal);
-        let gmi = solved.get_gmi(x);
-        println!("gmi: {:?}", gmi);
     }
 
     #[test]
