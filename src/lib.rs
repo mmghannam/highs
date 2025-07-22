@@ -2051,4 +2051,91 @@ mod test {
         assert_eq!(row2.lower_bound, f64::NEG_INFINITY);
         assert_eq!(row2.coefficients, vec![(0, 1.0), (1, 1.0)]);
     }
+
+    #[test]
+    fn test_postsolve_with_offset() {
+        // Create a simple problem with one variable that has a lower bound of 2
+        // This should result in presolve creating an empty problem with an offset
+        let mut problem = RowProblem::new();
+        let _x = problem.add_column(2.0, 2..); // x >= 2, objective coefficient = 1
+
+        // No constraints - just minimize x subject to x >= 2
+        // The optimal solution should be x = 2 with objective value = 2
+
+        let mut model = problem.optimise(Sense::Minimise);
+
+        // Apply presolve
+        model.presolve();
+
+        // Check the presolved problem
+        let (
+            presolved_num_col,
+            presolved_num_row,
+            presolved_num_nz,
+            _presolved_sense,
+            presolved_offset,
+            _presolved_col_cost,
+            _presolved_col_lower,
+            _presolved_col_upper,
+            _presolved_row_lower,
+            _presolved_row_upper,
+            _presolved_row_data,
+            _presolved_integrality,
+        ) = model.get_presolved_row_lp();
+
+        println!("Presolved problem:");
+        println!("  Variables: {}", presolved_num_col);
+        println!("  Constraints: {}", presolved_num_row);
+        println!("  Non-zeros: {}", presolved_num_nz);
+        println!("  Offset: {}", presolved_offset);
+
+        // The presolved problem should be empty (or nearly empty) with an offset of 2
+        // since the optimal solution is trivially x = 2
+        assert_eq!(
+            presolved_offset, 4.0,
+            "Presolved problem should have offset of 2"
+        );
+
+        // Solve the model
+        let mut solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+
+        // Get the solution
+        let solution = solved.get_solution();
+        println!("Original solution: {:?}", solution.columns());
+        println!("Objective value: {}", solved.obj_val());
+
+        // The solution should be x = 2 (minimum feasible value)
+        // The objective value should be 2 * 2 = 4 (coefficient * variable)
+        assert!(
+            (solution.columns()[0] - 2.0).abs() < 1e-6,
+            "Solution should be x = 2, got {}",
+            solution.columns()[0]
+        );
+        assert!(
+            (solved.obj_val() - 4.0).abs() < 1e-6,
+            "Objective value should be 4, got {}",
+            solved.obj_val()
+        );
+
+        // Test postsolve with a different value to see if it gets transformed correctly
+        let test_value = 5.0;
+        let postsolved = solved.postsolve(vec![(0, test_value)]);
+        println!(
+            "Postsolved result for input {}: {:?}",
+            test_value, postsolved
+        );
+
+        // The postsolve should return the input value since there's no transformation needed
+        assert!(!postsolved.is_empty(), "Postsolve should return a value");
+        assert_eq!(postsolved[0].0, 0, "Should be for variable 0");
+
+        // Test with zero value (should be filtered out)
+        let postsolved_zero = solved.postsolve(vec![(0, 0.0)]);
+        println!("Postsolved result for input 0: {:?}", postsolved_zero);
+        assert!(
+            postsolved_zero.is_empty(),
+            "Zero values should be filtered out"
+        );
+    }
 }
