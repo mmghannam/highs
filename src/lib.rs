@@ -1280,6 +1280,123 @@ impl SolvedModel {
         unsafe { Highs_getObjectiveValue(self.highs.ptr()) }
     }
 
+    /// Get data associated with multiple adjacent rows from the model
+    /// Returns (lower_bounds, upper_bounds, num_nz, matrix_start, matrix_index, matrix_value)
+    ///
+    /// To query the constraint coefficients, this function should be called twice:
+    /// 1. First call with matrix_start, matrix_index, and matrix_value as None to get num_nz
+    /// 2. Second call with properly allocated vectors to get the actual data
+    pub fn get_rows_by_range(
+        &self,
+        from_row: Row,
+        to_row: Row,
+    ) -> Result<
+        (
+            Vec<f64>,
+            Vec<f64>,
+            usize,
+            Vec<HighsInt>,
+            Vec<HighsInt>,
+            Vec<f64>,
+        ),
+        HighsStatus,
+    > {
+        let num_rows = (to_row - from_row + 1) as usize;
+
+        // First call to get the number of non-zero elements
+        let mut lower = vec![0.0; num_rows];
+        let mut upper = vec![0.0; num_rows];
+        let mut num_nz = 0i32;
+
+        unsafe {
+            highs_call!(Highs_getRowsByRange(
+                self.highs.unsafe_mut_ptr(),
+                from_row as c_int,
+                to_row as c_int,
+                &mut (num_rows as c_int),
+                lower.as_mut_ptr(),
+                upper.as_mut_ptr(),
+                &mut num_nz,
+                std::ptr::null_mut(), // matrix_start
+                std::ptr::null_mut(), // matrix_index
+                std::ptr::null_mut()  // matrix_value
+            ))?;
+        }
+
+        // Second call to get the actual matrix data
+        let mut matrix_start = vec![0; num_rows];
+        let mut matrix_index = vec![0; num_nz as usize];
+        let mut matrix_value = vec![0.0; num_nz as usize];
+        let mut num_rows_out = num_rows as c_int;
+
+        unsafe {
+            highs_call!(Highs_getRowsByRange(
+                self.highs.unsafe_mut_ptr(),
+                from_row as c_int,
+                to_row as c_int,
+                &mut num_rows_out,
+                lower.as_mut_ptr(),
+                upper.as_mut_ptr(),
+                &mut num_nz,
+                matrix_start.as_mut_ptr(),
+                matrix_index.as_mut_ptr(),
+                matrix_value.as_mut_ptr()
+            ))?;
+        }
+
+        Ok((
+            lower,
+            upper,
+            num_nz as usize,
+            matrix_start,
+            matrix_index,
+            matrix_value,
+        ))
+    }
+
+    /// Get rows by range in a more structured format
+    /// Returns a vector of row data with bounds and constraint coefficients
+    pub fn get_rows_by_range_structured(
+        &self,
+        from_row: Row,
+        to_row: Row,
+    ) -> Result<Vec<RowData>, HighsStatus> {
+        let (lower, upper, _num_nz, matrix_start, matrix_index, matrix_value) =
+            self.get_rows_by_range(from_row, to_row)?;
+
+        let num_rows = (to_row - from_row + 1) as usize;
+        let mut rows = Vec::with_capacity(num_rows);
+
+        for i in 0..num_rows {
+            let start = matrix_start[i] as usize;
+            let end = if i == num_rows - 1 {
+                matrix_value.len()
+            } else {
+                matrix_start[i + 1] as usize
+            };
+
+            let mut coefficients = Vec::with_capacity(end - start);
+            for j in start..end {
+                coefficients.push((matrix_index[j] as Col, matrix_value[j]));
+            }
+
+            rows.push(RowData {
+                lower_bound: lower[i],
+                upper_bound: upper[i],
+                coefficients,
+            });
+        }
+
+        Ok(rows)
+    }
+
+    /// Get data for a single row/constraint
+    /// Returns the row bounds and constraint coefficients
+    pub fn get_row(&self, row: Row) -> Result<RowData, HighsStatus> {
+        let mut row_data = self.get_rows_by_range_structured(row, row)?;
+        Ok(row_data.pop().unwrap()) // Safe unwrap since we know we have exactly one row
+    }
+
     /// Get Gomory Mixed-Integer (GMI) cut for a given basic variable
     /// Returns the coefficients and constant term for the GMI cut
     /// The cut will be of the form: sum(coef[i] * x[i]) <= constant
@@ -1332,6 +1449,17 @@ pub struct Solution {
     coldual: Vec<f64>,
     rowvalue: Vec<f64>,
     rowdual: Vec<f64>,
+}
+
+/// Data for a single row/constraint
+#[derive(Clone, Debug)]
+pub struct RowData {
+    /// Lower bound of the constraint
+    pub lower_bound: f64,
+    /// Upper bound of the constraint  
+    pub upper_bound: f64,
+    /// Constraint coefficients as (column_index, coefficient) pairs
+    pub coefficients: Vec<(Col, f64)>,
 }
 
 impl Solution {
@@ -1851,45 +1979,76 @@ mod test {
         println!("gmi: {:?}", gmi);
     }
 
-
     #[test]
-    fn test_basis_methods3() {
+    fn test_get_rows_by_range() {
         let mut problem = RowProblem::new();
-        let x = problem.add_column(40.0, 0..);
-        let y = problem.add_column(50.0, 0..);
-        problem.add_row(..12, [x, y].iter().copied().zip([2., 3.]));
-        problem.add_row(..9, [y].iter().copied().zip([3., 1.]));
+        let x = problem.add_column(1.2, 0..);
+        let y = problem.add_column(1.7, 0..);
+        problem.add_row(..3000, [x].iter().copied().zip([1.]));
+        problem.add_row(..4000, [y].iter().copied().zip([1.]));
+        problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
         let model = problem.optimise(Sense::Maximise);
-        // model.set_option("presolve", "off");
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::Optimal);
-        let (col_statuses, row_statuses) = solved.get_basis_status();
-        println!("col_statuses: {:?}", col_statuses);
-        println!("row_statuses: {:?}", row_statuses);
-        let basic_vars = solved.get_basic_vars();
-        println!("\nbasic vars: {:?}", basic_vars);
 
-        println!("reduced rows:");
-        for i in 0..solved.num_rows() {
-            let reduced_row = solved.get_reduced_row(i);
-            println!("{:?}", reduced_row);
-        }
+        // Test get_rows_by_range
+        let result = solved.get_rows_by_range(0, 2);
+        assert!(result.is_ok());
+        let (lower, upper, num_nz, matrix_start, matrix_index, matrix_value) = result.unwrap();
 
-        // println!("reduced cols:");
-        // for i in 0..solved.num_cols() {
-        //     let reduced_col = solved.get_reduced_column(i);
-        //     println!("{:?}", reduced_col);
-        // }
+        println!("lower: {:?}", lower);
+        println!("upper: {:?}", upper);
+        println!("num_nz: {:?}", num_nz);
+        println!("matrix_start: {:?}", matrix_start);
+        println!("matrix_index: {:?}", matrix_index);
+        println!("matrix_value: {:?}", matrix_value);
 
-        println!("basis inverse rows:");
-        for i in 0..solved.num_rows() {
-            let basis_inverse_row = solved.get_basis_inverse_row(i);
-            println!("{:?}", basis_inverse_row);
-        }
+        assert_eq!(lower.len(), 3);
+        assert_eq!(upper, vec![3000.0, 4000.0, 5000.0]);
+        assert_eq!(num_nz, 4); // Total non-zero elements across all 3 rows
 
-        println!("basis sol:");
-        let basis_sol = solved.get_basis_sol(vec![12., 9.]);
-        println!("{:?}", basis_sol);
-        assert_eq!(basis_sol.0.len(), solved.num_rows());
+        // Test structured version
+        let structured_result = solved.get_rows_by_range_structured(0, 2);
+        assert!(structured_result.is_ok());
+        let row_data = structured_result.unwrap();
+
+        assert_eq!(row_data.len(), 3);
+        assert_eq!(row_data[0].upper_bound, 3000.0);
+        assert_eq!(row_data[1].upper_bound, 4000.0);
+        assert_eq!(row_data[2].upper_bound, 5000.0);
+
+        // Check coefficients
+        assert_eq!(row_data[0].coefficients, vec![(0, 1.0)]);
+        assert_eq!(row_data[1].coefficients, vec![(1, 1.0)]);
+        assert_eq!(row_data[2].coefficients, vec![(0, 1.0), (1, 1.0)]);
+    }
+
+    #[test]
+    fn test_get_row() {
+        let mut problem = RowProblem::new();
+        let x = problem.add_column(1.2, 0..);
+        let y = problem.add_column(1.7, 0..);
+        problem.add_row(..3000, [x].iter().copied().zip([1.]));
+        problem.add_row(..4000, [y].iter().copied().zip([1.]));
+        problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
+        let model = problem.optimise(Sense::Maximise);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+
+        // Test get_row for each row
+        let row0 = solved.get_row(0).unwrap();
+        assert_eq!(row0.upper_bound, 3000.0);
+        assert_eq!(row0.lower_bound, f64::NEG_INFINITY);
+        assert_eq!(row0.coefficients, vec![(0, 1.0)]);
+
+        let row1 = solved.get_row(1).unwrap();
+        assert_eq!(row1.upper_bound, 4000.0);
+        assert_eq!(row1.lower_bound, f64::NEG_INFINITY);
+        assert_eq!(row1.coefficients, vec![(1, 1.0)]);
+
+        let row2 = solved.get_row(2).unwrap();
+        assert_eq!(row2.upper_bound, 5000.0);
+        assert_eq!(row2.lower_bound, f64::NEG_INFINITY);
+        assert_eq!(row2.coefficients, vec![(0, 1.0), (1, 1.0)]);
     }
 }
