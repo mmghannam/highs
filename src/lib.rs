@@ -967,8 +967,15 @@ impl Default for HighsPtr {
 
 /// Trait to give access to methods that are common to both `Model` and `SolvedModel`.
 pub trait LikeModel {
+    /// Returns the name of the variable at the given index.
+    fn get_col_name(&self, col: Col) -> Result<String, HighsStatus>;
+
     /// Get data associated with multiple adjacent rows from the model
-    fn get_rows_by_range(&self, from_row: Row, to_row: Row) -> Result<
+    fn get_rows_by_range(
+        &self,
+        from_row: Row,
+        to_row: Row,
+    ) -> Result<
         (
             Vec<f64>,
             Vec<f64>,
@@ -977,7 +984,8 @@ pub trait LikeModel {
             Vec<HighsInt>,
             Vec<f64>,
         ),
-        HighsStatus>;
+        HighsStatus,
+    >;
 
     /// Get rows by range in a more structured format
     /// Returns a vector of row data with bounds and constraint coefficients
@@ -1024,6 +1032,26 @@ pub trait LikeModel {
 }
 
 impl<H: HasHighsPtr> LikeModel for H {
+    fn get_col_name(&self, col: Col) -> Result<String, HighsStatus> {
+        let highs_ptr = self.highs_ptr();
+        let mut name_buf = vec![0u8; kHighsMaximumStringLength as usize];
+        unsafe {
+            highs_call!(Highs_getColName(
+                highs_ptr.unsafe_mut_ptr(),
+                col as i32,
+                name_buf.as_mut_ptr() as *mut i8
+            ))?;
+        }
+
+        let name = name_buf
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as char)
+            .collect::<String>();
+
+        Ok(name)
+    }
+
     /// Get data associated with multiple adjacent rows from the model
     /// Returns (lower_bounds, upper_bounds, num_nz, matrix_start, matrix_index, matrix_value)
     ///
@@ -1414,7 +1442,6 @@ impl SolvedModel {
     pub fn obj_val(&self) -> f64 {
         unsafe { Highs_getObjectiveValue(self.highs.ptr()) }
     }
-
 }
 
 /// Trait for types that can provide access to the underlying HiGHS pointer
