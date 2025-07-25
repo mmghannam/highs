@@ -428,6 +428,21 @@ impl Model {
         )
     }
 
+    /// Changes the integrality of a column in the model.
+    pub fn change_col_integrality(&mut self, col: Col, integer: bool) -> Result<(), HighsStatus> {
+        unsafe {
+            highs_call! {
+                Highs_changeColIntegrality(
+                    self.highs.mut_ptr(),
+                    col as c_int,
+                    integer as c_int
+                )
+            }?
+        };
+
+        Ok(())
+    }
+
     /// Returns the LP data in the presolved problem
     pub fn get_presolved_row_lp(
         &self,
