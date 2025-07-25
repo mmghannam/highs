@@ -970,6 +970,9 @@ pub trait LikeModel {
     /// Returns the name of the variable at the given index.
     fn get_col_name(&self, col: Col) -> Result<String, HighsStatus>;
 
+    /// The status of the solution. Should be Optimal if everything went well
+    fn status(&self) -> HighsModelStatus;
+
     /// Get data associated with multiple adjacent rows from the model
     fn get_rows_by_range(
         &self,
@@ -1050,6 +1053,11 @@ impl<H: HasHighsPtr> LikeModel for H {
             .collect::<String>();
 
         Ok(name)
+    }
+
+    fn status(&self) -> HighsModelStatus {
+        let model_status = unsafe { Highs_getModelStatus(self.highs_ptr().unsafe_mut_ptr()) };
+        HighsModelStatus::try_from(model_status).unwrap()
     }
 
     /// Get data associated with multiple adjacent rows from the model
@@ -1174,12 +1182,6 @@ impl HighsPtr {
 }
 
 impl SolvedModel {
-    /// The status of the solution. Should be Optimal if everything went well
-    pub fn status(&self) -> HighsModelStatus {
-        let model_status = unsafe { Highs_getModelStatus(self.highs.unsafe_mut_ptr()) };
-        HighsModelStatus::try_from(model_status).unwrap()
-    }
-
     /// Get the solution to the problem
     pub fn get_solution(&self) -> Solution {
         let cols = self.num_cols();

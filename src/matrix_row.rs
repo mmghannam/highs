@@ -5,7 +5,7 @@ use std::ops::RangeBounds;
 use std::os::raw::c_int;
 
 use crate::matrix_col::ColMatrix;
-use crate::{Problem, Row};
+use crate::{LikeModel, Problem, Row};
 
 /// Represents a variable
 pub type Col = usize;
