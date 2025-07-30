@@ -1047,6 +1047,9 @@ pub trait LikeModel {
         let mut row_data = self.get_rows_by_range_structured(row, row)?;
         Ok(row_data.pop().unwrap()) // Safe unwrap since we know we have exactly one row
     }
+
+    /// Writes the model to a file
+    fn write(&self, path: &str) -> Result<(), HighsStatus>;
 }
 
 impl<H: HasHighsPtr> LikeModel for H {
@@ -1147,6 +1150,19 @@ impl<H: HasHighsPtr> LikeModel for H {
             matrix_index,
             matrix_value,
         ))
+    }
+
+    /// Writes the model to a file
+    fn write(&self, path: &str) -> Result<(), HighsStatus> {
+        let c_path = CString::new(path).expect("invalid path");
+        unsafe {
+            highs_call!(Highs_writeModel(
+                self.highs_ptr().unsafe_mut_ptr(),
+                c_path.as_ptr()
+            ))
+        }?;
+
+        Ok(())
     }
 }
 
@@ -2171,5 +2187,29 @@ mod test {
             postsolved_zero.is_empty(),
             "Zero values should be filtered out"
         );
+    }
+
+
+    #[test]
+    fn test_read_and_write() {
+        let mut model = Model::default();
+        model.read("data/simple.mps");
+
+        assert_eq!(model.num_rows(), 2);
+        assert_eq!(model.num_cols(), 2);
+
+        // Write the model to a file
+        let write_path = "data/test_write.mps";
+        model.write(write_path).unwrap();
+
+        // Read the model back from the file
+        let mut read_model = Model::default();
+        read_model.read(write_path);
+
+        assert_eq!(read_model.num_rows(), 2);
+        assert_eq!(read_model.num_cols(), 2);
+
+        // Clean up the written file
+        std::fs::remove_file(write_path).unwrap();
     }
 }
