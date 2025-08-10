@@ -9,7 +9,7 @@
 //!constraints one by one.
 //!
 //! ```
-//! use highs::{Sense, Model, HighsModelStatus, RowProblem};
+//! use highs::{Sense, Model, HighsModelStatus, RowProblem, LikeModel};
 //! // max: x + 2y + z
 //! // under constraints:
 //! // c1: 3x +  y      <= 6
@@ -61,7 +61,7 @@
 //! ```
 //!
 //! ```
-//! use highs::{Sense, Model, HighsModelStatus, ColProblem};
+//! use highs::{Sense, Model, HighsModelStatus, ColProblem, LikeModel};
 //! // max: x + 2y + z
 //! // under constraints:
 //! // c1: 3x +  y      <= 6
