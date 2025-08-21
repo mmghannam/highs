@@ -982,6 +982,9 @@ impl Default for HighsPtr {
 
 /// Trait to give access to methods that are common to both `Model` and `SolvedModel`.
 pub trait LikeModel {
+    /// Returns the number of columns in the model
+    fn num_cols(&self) -> usize;
+
     /// Returns the name of the variable at the given index.
     fn get_col_name(&self, col: Col) -> Result<String, HighsStatus>;
 
@@ -1050,9 +1053,39 @@ pub trait LikeModel {
 
     /// Writes the model to a file
     fn write(&self, path: &str) -> Result<(), HighsStatus>;
+
+    /// Postsolve a solution
+    fn postsolve(&mut self, col_vals: Vec<(Col, f64)>) -> Vec<(Col, f64)>;
 }
 
 impl<H: HasHighsPtr> LikeModel for H {
+    fn postsolve(&mut self, col_vals: Vec<(Col, f64)>) -> Vec<(Col, f64)> {
+        let mut col_vals = col_vals;
+        let num_cols = self.num_cols();
+        let mut flat_col_vals = vec![0.0; num_cols];
+        for (col, val) in col_vals.iter_mut() {
+            flat_col_vals[*col] = *val;
+        }
+        let col_vals_ptr = flat_col_vals.as_mut_ptr();
+        println!("input {:?}", flat_col_vals);
+        let ret = unsafe {
+            Highs_postsolve(
+                self.highs_ptr().0,
+                col_vals_ptr as *const f64,
+                null_mut(),
+                null_mut(),
+            )
+        };
+        assert_ne!(ret, STATUS_ERROR, "postsolve failed");
+        println!("postsolved: {:?}", flat_col_vals);
+
+        flat_col_vals
+            .into_iter()
+            .enumerate()
+            .filter(|&x| x.1 != 0.)
+            .map(|x| (x.0 as Col, x.1))
+            .collect::<Vec<_>>()
+    }
     fn get_col_name(&self, col: Col) -> Result<String, HighsStatus> {
         let highs_ptr = self.highs_ptr();
         let mut name_buf = vec![0u8; kHighsMaximumStringLength as usize];
@@ -1163,6 +1196,10 @@ impl<H: HasHighsPtr> LikeModel for H {
         }?;
 
         Ok(())
+    }
+
+    fn num_cols(&self) -> usize {
+        self.highs_ptr().num_cols().unwrap()
     }
 }
 
@@ -1442,34 +1479,6 @@ impl SolvedModel {
         (col_vector, col_index)
     }
 
-    /// Postsolve a solution
-    pub fn postsolve(&mut self, col_vals: Vec<(Col, f64)>) -> Vec<(Col, f64)> {
-        let mut col_vals = col_vals;
-        let num_cols = self.num_cols();
-        let mut flat_col_vals = vec![0.0; num_cols];
-        for (col, val) in col_vals.iter_mut() {
-            flat_col_vals[*col] = *val;
-        }
-        let col_vals_ptr = flat_col_vals.as_mut_ptr();
-        println!("input {:?}", flat_col_vals);
-        let ret = unsafe {
-            Highs_postsolve(
-                self.highs.mut_ptr(),
-                col_vals_ptr as *const f64,
-                null_mut(),
-                null_mut(),
-            )
-        };
-        assert_ne!(ret, STATUS_ERROR, "postsolve failed");
-        println!("postsolved: {:?}", flat_col_vals);
-
-        flat_col_vals
-            .into_iter()
-            .enumerate()
-            .filter(|&x| x.1 != 0.)
-            .map(|x| (x.0 as Col, x.1))
-            .collect::<Vec<_>>()
-    }
 
     /// Gets the objective value
     pub fn obj_val(&self) -> f64 {
