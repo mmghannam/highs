@@ -1067,7 +1067,7 @@ impl<H: HasHighsPtr> LikeModel for H {
             flat_col_vals[*col] = *val;
         }
         let col_vals_ptr = flat_col_vals.as_mut_ptr();
-        println!("input {:?}", flat_col_vals);
+        // println!("input {:?}", flat_col_vals);
         let ret = unsafe {
             Highs_postsolve(
                 self.highs_ptr().0,
@@ -1077,7 +1077,7 @@ impl<H: HasHighsPtr> LikeModel for H {
             )
         };
         assert_ne!(ret, STATUS_ERROR, "postsolve failed");
-        println!("postsolved: {:?}", flat_col_vals);
+        // println!("postsolved: {:?}", flat_col_vals);
 
         flat_col_vals
             .into_iter()
