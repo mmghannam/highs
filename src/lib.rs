@@ -2221,4 +2221,21 @@ mod test {
         // Clean up the written file
         std::fs::remove_file(write_path).unwrap();
     }
+
+    #[test]
+    fn test_presolve_bound_tightening() {
+        let mut problem = RowProblem::new();
+        let x = problem.add_column(1.2, 0..);
+        let y = problem.add_column(1.7, 0..);
+        problem.add_row(..3000, [x].iter().copied().zip([1.]));
+        problem.add_row(..4000, [y].iter().copied().zip([1.]));
+        problem.add_row(..5000, [x, y].iter().copied().zip([1., 1.]));
+        let mut model = problem.optimise(Sense::Maximise);
+        let lp_data = model.get_row_lp();
+        model.presolve();
+        let data = model.get_presolved_row_lp();
+        let mut model = model.solve();
+        let postsolved_sol = model.postsolve(vec![(0, 1.0), (1, 1.0)]);
+        dbg!(postsolved_sol);
+    }
 }

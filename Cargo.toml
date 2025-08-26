@@ -8,6 +8,11 @@ license = "MIT"
 repository = "https://github.com/rust-or/highs"
 keywords = ["linear-programming", "optimization", "math", "solver"]
 
+[features]
+bundled = ["highs-sys/bundled"]
+
 [dependencies]
-highs-sys = { version = "1.11.0", default-features = false, features=["build", "libz"] }
+highs-sys = { git = "https://www.github.com/mmghannam/highs-sys", branch="no-build", default-features = false, features=["bundled", "libz"] }
+##highs-sys = { path = "../highs-sys", default-features = false, features=["build", "libz"] }
+
 log = "0.4.17"
