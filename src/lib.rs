@@ -594,6 +594,36 @@ impl Model {
             .collect()
     }
 
+    /// Set the basis for the model. This can be used to warm-start the solver
+    /// with a known basis from a previous solve.
+    ///
+    /// # Arguments
+    /// * `col_status` - Basis status for each column/variable
+    /// * `row_status` - Basis status for each row/constraint
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (col_status, row_status) = solved_model.get_basis_status();
+    /// model.set_basis(&col_status, &row_status);
+    /// ```
+    pub fn set_basis(&mut self, col_status: &[BasisStatus], row_status: &[BasisStatus]) -> Result<(), HighsStatus> {
+        assert_eq!(col_status.len(), self.num_cols(), "col_status length must match number of columns");
+        assert_eq!(row_status.len(), self.num_rows(), "row_status length must match number of rows");
+
+        let col_status_highs: Vec<HighsInt> = col_status.iter().map(|&s| s.into()).collect();
+        let row_status_highs: Vec<HighsInt> = row_status.iter().map(|&s| s.into()).collect();
+
+        unsafe {
+            highs_call!(Highs_setBasis(
+                self.highs.mut_ptr(),
+                col_status_highs.as_ptr(),
+                row_status_highs.as_ptr()
+            ))?
+        };
+
+        Ok(())
+    }
+
     /// Set the optimization sense (minimize by default)
     pub fn set_sense(&mut self, sense: Sense) {
         let ret = unsafe { Highs_changeObjectiveSense(self.highs.mut_ptr(), sense as c_int) };
@@ -1556,6 +1586,16 @@ impl SolvedModel {
     pub fn obj_val(&self) -> f64 {
         unsafe { Highs_getObjectiveValue(self.highs.ptr()) }
     }
+
+    /// Gets the total iteration count
+    pub fn get_iteration_count(&self) -> i32 {
+        unsafe { Highs_getIterationCount(self.highs.ptr()) }
+    }
+
+    /// Gets the simplex iteration count
+    pub fn get_simplex_iteration_count(&self) -> i32 {
+        unsafe { Highs_getSimplexIterationCount(self.highs.ptr()) }
+    }
 }
 
 /// Trait for types that can provide access to the underlying HiGHS pointer
@@ -1677,6 +1717,18 @@ impl From<HighsInt> for BasisStatus {
             kHighsBasisStatusUpper => BasisStatus::Upper,
             kHighsBasisStatusZero => BasisStatus::Zero,
             _ => panic!("Invalid basis status"),
+        }
+    }
+}
+
+#[allow(non_upper_case_globals)]
+impl From<BasisStatus> for HighsInt {
+    fn from(status: BasisStatus) -> Self {
+        match status {
+            BasisStatus::Lower => kHighsBasisStatusLower,
+            BasisStatus::Basic => kHighsBasisStatusBasic,
+            BasisStatus::Upper => kHighsBasisStatusUpper,
+            BasisStatus::Zero => kHighsBasisStatusZero,
         }
     }
 }
@@ -2339,5 +2391,73 @@ mod test {
         let mut model = model.solve();
         let postsolved_sol = model.postsolve(vec![(0, 1.0), (1, 1.0)]);
         dbg!(postsolved_sol);
+    }
+
+    #[test]
+    fn test_set_basis_warm_start() {
+        // Create a problem with enough complexity to require multiple simplex iterations
+        let mut problem = RowProblem::new();
+        let x1 = problem.add_column(3.0, 0..);
+        let x2 = problem.add_column(2.0, 0..);
+        let x3 = problem.add_column(1.0, 0..);
+        let x4 = problem.add_column(4.0, 0..);
+
+        // Add multiple constraints to make it non-trivial
+        problem.add_row(..100, vec![(x1, 2.), (x2, 1.), (x3, 1.), (x4, 3.)]);
+        problem.add_row(..80, vec![(x1, 1.), (x2, 2.), (x3, 3.), (x4, 1.)]);
+        problem.add_row(..120, vec![(x1, 3.), (x2, 1.), (x3, 2.), (x4, 2.)]);
+        problem.add_row(..150, vec![(x1, 1.), (x2, 3.), (x3, 1.), (x4, 1.)]);
+
+        // First solve: cold start (no basis provided)
+        let mut model = problem.clone().optimise(Sense::Maximise);
+        model.set_option("presolve", "off"); // Disable presolve to ensure we use simplex
+        let solved = model.solve();
+
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+
+        let cold_start_iterations = solved.get_simplex_iteration_count();
+        let (col_status, row_status) = solved.get_basis_status();
+        let objective_value = solved.obj_val();
+
+        println!("Cold start iterations: {}", cold_start_iterations);
+        println!("Objective value: {}", objective_value);
+        println!("Col basis status: {:?}", col_status);
+        println!("Row basis status: {:?}", row_status);
+
+        // Second solve: warm start (with basis from first solve)
+        let mut model2 = problem.optimise(Sense::Maximise);
+        model2.set_option("presolve", "off"); // Disable presolve to ensure we use simplex
+
+        // Set the basis from the first solve
+        model2.set_basis(&col_status, &row_status).expect("Failed to set basis");
+
+        let solved2 = model2.solve();
+
+        assert_eq!(solved2.status(), HighsModelStatus::Optimal);
+
+        let warm_start_iterations = solved2.get_simplex_iteration_count();
+        let objective_value2 = solved2.obj_val();
+
+        println!("Warm start iterations: {}", warm_start_iterations);
+        println!("Objective value: {}", objective_value2);
+
+        // With the optimal basis, it should solve in 0 iterations (or very few)
+        assert!(
+            warm_start_iterations < cold_start_iterations,
+            "Warm start should require fewer iterations. Cold: {}, Warm: {}",
+            cold_start_iterations,
+            warm_start_iterations
+        );
+
+        // The objective values should be the same
+        assert!(
+            (objective_value - objective_value2).abs() < 1e-6,
+            "Objective values should match. Cold: {}, Warm: {}",
+            objective_value,
+            objective_value2
+        );
+
+        // With the optimal basis, we expect 0 iterations
+        println!("\n✓ Warm start reduced iterations from {} to {}", cold_start_iterations, warm_start_iterations);
     }
 }
