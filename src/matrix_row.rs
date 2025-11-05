@@ -5,7 +5,7 @@ use std::ops::RangeBounds;
 use std::os::raw::c_int;
 
 use crate::matrix_col::ColMatrix;
-use crate::{LikeModel, Problem, Row};
+use crate::{Problem, Row};
 
 /// Represents a variable
 pub type Col = usize;
@@ -123,7 +123,7 @@ impl From<RowMatrix> for ColMatrix {
 #[test]
 fn test_conversion() {
     use crate::status::HighsModelStatus::Optimal;
-    use crate::{ColProblem, Model, RowProblem, Sense};
+    use crate::{ColProblem, LikeModel, Model, RowProblem, Sense};
     let inf = f64::INFINITY;
     let neg_inf = f64::NEG_INFINITY;
     let mut p = RowProblem::default();
