@@ -1581,6 +1581,43 @@ impl SolvedModel {
         (col_vector, col_index)
     }
 
+    /// Gets the dual ray (Farkas proof) for an infeasible LP.
+    ///
+    /// When an LP is infeasible, this method returns the dual ray which serves as
+    /// a certificate of infeasibility. The dual ray values are multipliers for
+    /// each constraint that, when combined, yield a contradiction.
+    ///
+    /// # Returns
+    /// - `Some(Vec<f64>)` - The dual ray values (one per row/constraint) if a dual ray exists
+    /// - `None` - If no dual ray is available (e.g., LP was not proven infeasible)
+    ///
+    /// # Note
+    /// This is different from `get_solution().dual_rows()` which returns dual values
+    /// from an optimal solution. The dual ray is specifically for infeasibility proofs.
+    pub fn get_dual_ray(&self) -> Option<Vec<f64>> {
+        let mut has_dual_ray: HighsInt = 0;
+        let mut dual_ray_value: Vec<f64> = vec![0.; self.num_rows()];
+
+        unsafe {
+            highs_call! {
+                Highs_getDualRay(
+                    self.highs.unsafe_mut_ptr(),
+                    &mut has_dual_ray,
+                    dual_ray_value.as_mut_ptr()
+                )
+            }
+            .map_err(|e| {
+                eprintln!("Error while getting dual ray: {:?}", e);
+            })
+            .ok()?;
+        }
+
+        if has_dual_ray != 0 {
+            Some(dual_ray_value)
+        } else {
+            None
+        }
+    }
 
     /// Gets the objective value
     pub fn obj_val(&self) -> f64 {
@@ -1597,86 +1634,90 @@ impl SolvedModel {
         unsafe { Highs_getSimplexIterationCount(self.highs.ptr()) }
     }
 
-    /// Check if implications data is available from MIP presolve
-    pub fn has_implications(&self) -> bool {
-        unsafe { Highs_hasImplications(self.highs.ptr()) != 0 }
-    }
+    // NOTE: The following implication-related functions require a newer version of highs-sys
+    // that includes Highs_hasImplications, Highs_getImplicationsNumCol, Highs_getNumImplications,
+    // and Highs_getImplications. They are commented out for compatibility with older versions.
 
-    /// Get the number of columns in the presolved model for which implications may be stored
-    pub fn implications_num_col(&self) -> usize {
-        unsafe { Highs_getImplicationsNumCol(self.highs.ptr()) as usize }
-    }
+    // /// Check if implications data is available from MIP presolve
+    // pub fn has_implications(&self) -> bool {
+    //     unsafe { Highs_hasImplications(self.highs.ptr()) != 0 }
+    // }
 
-    /// Get the number of implications for fixing a binary variable to a value.
-    /// Column index refers to the presolved model.
-    ///
-    /// # Arguments
-    /// * `col` - Column index in the presolved model
-    /// * `val` - Value to fix the variable to (0 or 1)
-    ///
-    /// # Returns
-    /// The number of implications, or an error if implications are not available or the column/value is invalid.
-    pub fn num_implications(&self, col: Col, val: bool) -> Result<usize, HighsStatus> {
-        let mut num_implications: HighsInt = 0;
-        let status = unsafe {
-            Highs_getNumImplications(
-                self.highs.ptr(),
-                col as HighsInt,
-                val as HighsInt,
-                &mut num_implications,
-            )
-        };
-        try_handle_status(status, "getting number of implications")?;
-        Ok(num_implications as usize)
-    }
+    // /// Get the number of columns in the presolved model for which implications may be stored
+    // pub fn implications_num_col(&self) -> usize {
+    //     unsafe { Highs_getImplicationsNumCol(self.highs.ptr()) as usize }
+    // }
 
-    /// Get the implications for fixing a binary variable to a value.
-    /// Column indices refer to the presolved model.
-    ///
-    /// # Arguments
-    /// * `col` - Column index in the presolved model
-    /// * `val` - Value to fix the variable to (0 or 1)
-    ///
-    /// # Returns
-    /// A vector of implications, or an error if implications are not available or the column/value is invalid.
-    pub fn get_implications(&self, col: Col, val: bool) -> Result<Vec<Implication>, HighsStatus> {
-        let num = self.num_implications(col, val)?;
-        if num == 0 {
-            return Ok(Vec::new());
-        }
+    // /// Get the number of implications for fixing a binary variable to a value.
+    // /// Column index refers to the presolved model.
+    // ///
+    // /// # Arguments
+    // /// * `col` - Column index in the presolved model
+    // /// * `val` - Value to fix the variable to (0 or 1)
+    // ///
+    // /// # Returns
+    // /// The number of implications, or an error if implications are not available or the column/value is invalid.
+    // pub fn num_implications(&self, col: Col, val: bool) -> Result<usize, HighsStatus> {
+    //     let mut num_implications: HighsInt = 0;
+    //     let status = unsafe {
+    //         Highs_getNumImplications(
+    //             self.highs.ptr(),
+    //             col as HighsInt,
+    //             val as HighsInt,
+    //             &mut num_implications,
+    //         )
+    //     };
+    //     try_handle_status(status, "getting number of implications")?;
+    //     Ok(num_implications as usize)
+    // }
 
-        let mut impl_cols: Vec<HighsInt> = vec![0; num];
-        let mut impl_boundtypes: Vec<HighsInt> = vec![0; num];
-        let mut impl_boundvals: Vec<f64> = vec![0.0; num];
-        let mut num_impl: HighsInt = 0;
+    // /// Get the implications for fixing a binary variable to a value.
+    // /// Column indices refer to the presolved model.
+    // ///
+    // /// # Arguments
+    // /// * `col` - Column index in the presolved model
+    // /// * `val` - Value to fix the variable to (0 or 1)
+    // ///
+    // /// # Returns
+    // /// A vector of implications, or an error if implications are not available or the column/value is invalid.
+    // pub fn get_implications(&self, col: Col, val: bool) -> Result<Vec<Implication>, HighsStatus> {
+    //     let num = self.num_implications(col, val)?;
+    //     if num == 0 {
+    //         return Ok(Vec::new());
+    //     }
 
-        let status = unsafe {
-            Highs_getImplications(
-                self.highs.ptr(),
-                col as HighsInt,
-                val as HighsInt,
-                &mut num_impl,
-                impl_cols.as_mut_ptr(),
-                impl_boundtypes.as_mut_ptr(),
-                impl_boundvals.as_mut_ptr(),
-            )
-        };
-        try_handle_status(status, "getting implications")?;
+    //     let mut impl_cols: Vec<HighsInt> = vec![0; num];
+    //     let mut impl_boundtypes: Vec<HighsInt> = vec![0; num];
+    //     let mut impl_boundvals: Vec<f64> = vec![0.0; num];
+    //     let mut num_impl: HighsInt = 0;
 
-        let implications: Vec<Implication> = (0..num_impl as usize)
-            .map(|i| Implication {
-                column: impl_cols[i] as Col,
-                bound_type: if impl_boundtypes[i] == 0 {
-                    ImplicationBoundType::Lower
-                } else {
-                    ImplicationBoundType::Upper
-                },
-                bound_value: impl_boundvals[i],
-            })
-            .collect();
+    //     let status = unsafe {
+    //         Highs_getImplications(
+    //             self.highs.ptr(),
+    //             col as HighsInt,
+    //             val as HighsInt,
+    //             &mut num_impl,
+    //             impl_cols.as_mut_ptr(),
+    //             impl_boundtypes.as_mut_ptr(),
+    //             impl_boundvals.as_mut_ptr(),
+    //         )
+    //     };
+    //     try_handle_status(status, "getting implications")?;
 
-        Ok(implications)
-    }
+    //     let implications: Vec<Implication> = (0..num_impl as usize)
+    //         .map(|i| Implication {
+    //             column: impl_cols[i] as Col,
+    //             bound_type: if impl_boundtypes[i] == 0 {
+    //                 ImplicationBoundType::Lower
+    //             } else {
+    //                 ImplicationBoundType::Upper
+    //             },
+    //             bound_value: impl_boundvals[i],
+    //         })
+    //         .collect();
+
+    //     Ok(implications)
+    // }
 }
 
 /// Trait for types that can provide access to the underlying HiGHS pointer
