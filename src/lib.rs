@@ -1022,6 +1022,87 @@ impl Model {
         };
         Ok(())
     }
+
+    /// Check if implications data is available from MIP presolve
+    pub fn has_implications(&self) -> bool {
+        unsafe { Highs_hasImplications(self.highs.ptr()) != 0 }
+    }
+
+    /// Get the number of columns in the presolved model for which implications may be stored
+    pub fn implications_num_col(&self) -> usize {
+        unsafe { Highs_getImplicationsNumCol(self.highs.ptr()) as usize }
+    }
+
+    /// Get the number of implications for fixing a binary variable to a value.
+    /// Column index refers to the presolved model.
+    ///
+    /// # Arguments
+    /// * `col` - Column index in the presolved model
+    /// * `val` - Value to fix the variable to (0 or 1)
+    ///
+    /// # Returns
+    /// The number of implications, or an error if implications are not available or the column/value is invalid.
+    pub fn num_implications(&self, col: Col, val: bool) -> Result<usize, HighsStatus> {
+        let mut num_implications: HighsInt = 0;
+        let status = unsafe {
+            Highs_getNumImplications(
+                self.highs.ptr(),
+                col as HighsInt,
+                val as HighsInt,
+                &mut num_implications,
+            )
+        };
+        try_handle_status(status, "getting number of implications")?;
+        Ok(num_implications as usize)
+    }
+
+    /// Get the implications for fixing a binary variable to a value.
+    /// Column indices refer to the presolved model.
+    ///
+    /// # Arguments
+    /// * `col` - Column index in the presolved model
+    /// * `val` - Value to fix the variable to (0 or 1)
+    ///
+    /// # Returns
+    /// A vector of implications, or an error if implications are not available or the column/value is invalid.
+    pub fn get_implications(&self, col: Col, val: bool) -> Result<Vec<Implication>, HighsStatus> {
+        let num = self.num_implications(col, val)?;
+        if num == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut impl_cols: Vec<HighsInt> = vec![0; num];
+        let mut impl_boundtypes: Vec<HighsInt> = vec![0; num];
+        let mut impl_boundvals: Vec<f64> = vec![0.0; num];
+        let mut num_impl: HighsInt = 0;
+
+        let status = unsafe {
+            Highs_getImplications(
+                self.highs.ptr(),
+                col as HighsInt,
+                val as HighsInt,
+                &mut num_impl,
+                impl_cols.as_mut_ptr(),
+                impl_boundtypes.as_mut_ptr(),
+                impl_boundvals.as_mut_ptr(),
+            )
+        };
+        try_handle_status(status, "getting implications")?;
+
+        let implications: Vec<Implication> = (0..num_impl as usize)
+            .map(|i| Implication {
+                column: impl_cols[i] as Col,
+                bound_type: if impl_boundtypes[i] == 0 {
+                    ImplicationBoundType::Lower
+                } else {
+                    ImplicationBoundType::Upper
+                },
+                bound_value: impl_boundvals[i],
+            })
+            .collect();
+
+        Ok(implications)
+    }
 }
 
 impl From<SolvedModel> for Model {
