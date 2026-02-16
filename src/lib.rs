@@ -110,7 +110,7 @@
 
 use highs_sys::*;
 use std::convert::{TryFrom, TryInto};
-use std::ffi::{c_void, CString};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::num::TryFromIntError;
 use std::ops::{Bound, Index, RangeBounds};
 use std::os::raw::c_int;
@@ -653,7 +653,6 @@ impl Model {
     /// Returns an error if the problem is incoherent
     pub fn try_new<P: Into<Problem<ColMatrix>>>(problem: P) -> Result<Self, HighsStatus> {
         let mut highs = HighsPtr::default();
-        highs.make_quiet();
         let problem = problem.into();
         log::debug!(
             "Adding a problem with {} variables and {} constraints to HiGHS",
@@ -1113,6 +1112,32 @@ impl From<SolvedModel> for Model {
     }
 }
 
+/// Logging callback that forwards HiGHS log messages to the Rust `log` crate.
+///
+/// HiGHS log types: kInfo = 1, kDetailed = 2, kVerbose = 3, kWarning = 4, kError = 5
+unsafe extern "C" fn highs_log_callback(
+    _callback_type: c_int,
+    message: *const c_char,
+    data_out: *const HighsCallbackDataOut,
+    _data_in: *mut HighsCallbackDataIn,
+    _user_data: *mut c_void,
+) {
+    if message.is_null() || data_out.is_null() {
+        return;
+    }
+    let msg = CStr::from_ptr(message).to_string_lossy();
+    let msg = msg.trim_end();
+    if msg.is_empty() {
+        return;
+    }
+    let log_type = (*data_out).log_type;
+    match log_type {
+        4 => log::warn!("HiGHS: {}", msg),
+        5 => log::error!("HiGHS: {}", msg),
+        _ => log::trace!("HiGHS: {}", msg),
+    }
+}
+
 /// Wrapper around a HiGHS pointer.
 #[derive(Debug, Clone)]
 pub struct HighsPtr(*mut c_void);
@@ -1125,7 +1150,12 @@ impl Drop for HighsPtr {
 
 impl Default for HighsPtr {
     fn default() -> Self {
-        Self(unsafe { Highs_create() })
+        let ptr = unsafe { Highs_create() };
+        unsafe {
+            Highs_setCallback(ptr, Some(highs_log_callback), null_mut());
+            Highs_startCallback(ptr, kHighsCallbackLogging);
+        }
+        Self(ptr)
     }
 }
 
@@ -1878,7 +1908,8 @@ fn try_handle_status(status: c_int, msg: &str) -> Result<HighsStatus, HighsStatu
     match status_enum {
         status @ HighsStatus::OK => Ok(status),
         status @ HighsStatus::Warning => {
-            log::warn!("HiGHS emitted a warning: {}", msg);
+            // The actual warning message is logged by the logging callback.
+            log::debug!("HiGHS returned warning status from {}", msg);
             Ok(status)
         }
         error => Err(error),
