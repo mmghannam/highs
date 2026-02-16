@@ -1742,7 +1742,12 @@ impl SolvedModel {
 
     /// Gets the simplex iteration count
     pub fn get_simplex_iteration_count(&self) -> i32 {
-        unsafe { Highs_getSimplexIterationCount(self.highs.ptr()) }
+        let mut value: HighsInt = 0;
+        let info_name = CString::new("simplex_iteration_count").unwrap();
+        unsafe {
+            Highs_getIntInfoValue(self.highs.ptr(), info_name.as_ptr(), &mut value);
+        }
+        value
     }
 
     /// Check if implications data is available from MIP presolve
